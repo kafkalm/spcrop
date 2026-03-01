@@ -215,3 +215,23 @@ fi
 
 rm -f "$PR_BODY_FILE"
 ```
+
+## Cursor Cloud specific instructions
+
+This is a **client-side only** Vite + TypeScript SPA with zero backend/database dependencies.
+
+### Services
+
+| Service | Command | URL |
+|---|---|---|
+| Dev server | `npm run dev -- --host 0.0.0.0` | `http://127.0.0.1:5173` |
+
+### Key commands
+
+See `package.json` scripts: `dev`, `typecheck`, `build`, `preview`.
+
+### Notes
+
+- There is no dedicated linter (ESLint/Prettier); use `npm run typecheck` (`tsc --noEmit`) as the primary static check.
+- The app only accepts images via drag-and-drop onto the canvas (`#dropZone`). In headless/automated browser environments where native DnD is unreliable, you can programmatically simulate a drop using JavaScript in DevTools (create a `File` + `DataTransfer`, dispatch a `DragEvent('drop', …)` on `document.getElementById('dropZone')`).
+- No environment variables or secrets are needed for the app itself.
