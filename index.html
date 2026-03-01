@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sprite Layer Tool</title>
+  </head>
+  <body>
+    <div class="app">
+      <section class="workspace">
+        <div class="toolbar">
+          <button id="cropModeBtn" type="button">开始框选 (C)</button>
+          <button id="clearCropBtn" type="button">清除框选 (X/Esc)</button>
+          <span id="statusText">拖入图片开始编辑</span>
+        </div>
+        <div class="canvas-shell">
+          <div class="ruler-corner"></div>
+          <canvas id="rulerTop" class="ruler-top"></canvas>
+          <canvas id="rulerLeft" class="ruler-left"></canvas>
+          <div class="canvas-wrap" id="dropZone">
+            <canvas id="stage"></canvas>
+            <div class="drop-hint" id="dropHint">拖入 PNG/JPG 图片到这里</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <h2>裁切并生成图层</h2>
+        <div class="row">
+          <label for="targetW">目标宽</label>
+          <input id="targetW" type="number" value="128" min="1" />
+        </div>
+        <div class="row">
+          <label for="targetH">目标高</label>
+          <input id="targetH" type="number" value="128" min="1" />
+        </div>
+        <button id="createLayerBtn" type="button">从框选生成新图层 (R/Enter)</button>
+        <div class="row">
+          <label for="cropPresetW">框宽</label>
+          <input id="cropPresetW" type="number" value="128" min="1" />
+        </div>
+        <div class="row">
+          <label for="cropPresetH">框高</label>
+          <input id="cropPresetH" type="number" value="128" min="1" />
+        </div>
+        <button id="setCropRectBtn" type="button">一键创建框选 (B)</button>
+
+        <h2>图层列表（可多选）</h2>
+        <ul id="layerList" class="layer-list"></ul>
+
+        <h2>排列与导出</h2>
+        <button id="spreadBtn" type="button">自动散开图层（选中优先） (G)</button>
+        <button id="alignHBtn" type="button">选中图层横向排列 (H)</button>
+        <button id="alignVBtn" type="button">选中图层纵向排列 (V)</button>
+        <button id="deleteBtn" type="button">删除选中图层 (Delete/Backspace)</button>
+        <button id="exportBtn" type="button">导出 PNG（选中优先） (E)</button>
+        <p class="tips">提示：滚轮可上下左右平移画布；中键也可拖动画布。缩放修饰键可在下方设置（默认 Alt/Option(⌥)+滚轮）。画布带像素标尺。框选后可拖动选框，Shift 锁定 1:1。</p>
+
+        <h2>快捷键设置</h2>
+        <div class="row">
+          <label for="zoomModifierSelect">缩放键</label>
+          <select id="zoomModifierSelect">
+            <option value="Alt">Alt/Option(⌥)</option>
+            <option value="Ctrl">Ctrl</option>
+            <option value="Meta">Meta/Command(⌘)</option>
+            <option value="Shift">Shift</option>
+            <option value="None">无（直接滚轮缩放）</option>
+          </select>
+        </div>
+        <div id="shortcutList" class="shortcut-list"></div>
+        <button id="resetShortcutBtn" type="button">恢复默认快捷键</button>
+      </aside>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
