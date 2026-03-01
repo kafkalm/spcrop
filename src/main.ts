@@ -131,8 +131,6 @@ const deleteBtn = mustGet<HTMLButtonElement>("deleteBtn");
 const exportBtn = mustGet<HTMLButtonElement>("exportBtn");
 const targetWInput = mustGet<HTMLInputElement>("targetW");
 const targetHInput = mustGet<HTMLInputElement>("targetH");
-const cropPresetWInput = mustGet<HTMLInputElement>("cropPresetW");
-const cropPresetHInput = mustGet<HTMLInputElement>("cropPresetH");
 const zoomModifierSelect = mustGet<HTMLSelectElement>("zoomModifierSelect");
 const layerList = mustGet<HTMLUListElement>("layerList");
 const shortcutList = mustGet<HTMLDivElement>("shortcutList");
@@ -873,8 +871,8 @@ clearCropBtn.addEventListener("click", () => {
 });
 
 setCropRectBtn.addEventListener("click", () => {
-  const presetW = Number(cropPresetWInput.value);
-  const presetH = Number(cropPresetHInput.value);
+  const presetW = Number(targetWInput.value);
+  const presetH = Number(targetHInput.value);
   if (!Number.isFinite(presetW) || !Number.isFinite(presetH) || presetW <= 0 || presetH <= 0) {
     setStatus("框选尺寸无效");
     return;
