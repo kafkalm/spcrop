@@ -4,7 +4,7 @@ Image cropping, arranging, and exporting tool.
 
 > Built by the author for fast sprite slicing workflows.
 
-[中文 README](./README.md)
+[中文 README](./README.zh.md)
 
 ## Index
 

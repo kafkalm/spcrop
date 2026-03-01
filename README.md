@@ -1,93 +1,94 @@
 # spcrop
 
-图片裁剪、编排、输出工具
-> 作者用于快速裁剪 Sprite 图片
+Image cropping, arranging, and exporting tool.
 
-[English README](./README.en.md)
+> Built by the author for fast sprite slicing workflows.
 
-## 索引
+[中文 README](./README.zh.md)
 
-- [功能](#功能)
-- [环境要求](#环境要求)
-- [快速开始](#快速开始)
-- [脚本](#脚本)
-- [典型工作流](#典型工作流)
-- [画布操作](#画布操作)
-- [默认快捷键（可在 UI 中改）](#默认快捷键可在-ui-中改)
-- [项目结构](#项目结构)
+## Index
 
-## 功能
+- [Features](#features)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Scripts](#scripts)
+- [Typical Workflow](#typical-workflow)
+- [Canvas Controls](#canvas-controls)
+- [Default Shortcuts (Editable in UI)](#default-shortcuts-editable-in-ui)
+- [Project Structure](#project-structure)
 
-- 拖拽导入 PNG/JPG 作为图层
-- 图层多选、拖拽移动、方向键微调（Shift 加速）
-- 框选区域并按目标尺寸等比缩放（contain）生成新图层
-- 固定尺寸一键框选（默认 `128x128`）
-- 框选区域实时显示像素尺寸
-- 框选后可直接拖动选框
-- 框选时按住 Shift 锁定 `1:1`
-- 鼠标滚轮平移画布（支持纵向/横向）
-- 中键拖动画布
-- 修饰键 + 滚轮缩放画布（修饰键可配置）
-- 顶部/左侧像素标尺
-- 选中图层自动横向/纵向排列
-- 导出选中图层（未选中时导出全部）
-- 快捷键编辑器（录制新按键、持久化、恢复默认）
+## Features
 
-## 环境要求
+- Drag and drop PNG/JPG files as layers
+- Multi-select layers, drag to move, arrow key nudging (Shift for faster step)
+- Crop a region and resize to target size (contain) as a new layer
+- One-click fixed-size crop box (default `128x128`)
+- Real-time crop box pixel size label
+- Drag the crop box after creating it
+- Hold Shift while drawing crop box to lock `1:1`
+- Mouse wheel pans canvas (vertical/horizontal)
+- Middle mouse button pans canvas
+- Modifier + wheel to zoom (configurable)
+- Top/left pixel rulers around canvas
+- Auto horizontal/vertical arrangement for selected layers
+- Export selected layers (or all when none selected)
+- Shortcut editor (record new keys, persist, restore defaults)
+
+## Requirements
 
 - Node.js 18+
 - npm 9+
 
-## 快速开始
+## Quick Start
 
 ```bash
 npm install
 npm run dev
 ```
 
-默认访问：`http://127.0.0.1:5173`
+Default URL: `http://127.0.0.1:5173`
 
-## 脚本
+## Scripts
 
 ```bash
-npm run dev       # 启动开发服务
-npm run typecheck # TypeScript 类型检查
-npm run build     # 生产构建
-npm run preview   # 预览构建产物
+npm run dev       # start dev server
+npm run typecheck # TypeScript type check
+npm run build     # production build
+npm run preview   # preview build output
 ```
 
-## 典型工作流
+## Typical Workflow
 
-1. 拖入图片。
-2. 选中图层后开始框选，或用“一键创建框选”。
-3. 输入目标尺寸（如 `128x128`），生成新图层。
-4. 多选图层后横向排列。
-5. 导出 PNG。
+1. Drop one or multiple images.
+2. Select a layer and start cropping (or use one-click fixed-size crop).
+3. Set target size (for example `128x128`) and create a new layer.
+4. Multi-select layers and align horizontally.
+5. Export PNG.
 
-例如 6 个 `128x128` 图层横向排列，导出尺寸为 `768x128`。
+Example: 6 layers of `128x128` aligned horizontally export to `768x128`.
 
-## 画布操作
+## Canvas Controls
 
-- 滚轮：平移画布
-- 中键拖拽：平移画布
-- 缩放：`缩放修饰键 + 滚轮`
-  - 默认修饰键：`Alt/Option(⌥)`
-  - 可在 UI 中切换为 `Ctrl` / `Meta(Command)` / `Shift` / `无`
+- Wheel: pan canvas
+- Middle button drag: pan canvas
+- Zoom: `zoom modifier + wheel`
+  - Default modifier: `Alt/Option(⌥)`
+  - In UI, you can switch to `Ctrl` / `Meta(Command)` / `Shift` / `None`
 
-## 默认快捷键（可在 UI 中改）
+## Default Shortcuts (Editable in UI)
 
-- `C`：开始/结束框选
-- `X` 或 `Esc`：清除框选
-- `R` 或 `Enter`：从框选生成新图层
-- `B`：一键创建固定尺寸框选
-- `G`：自动散开图层
-- `H`：横向排列
-- `V`：纵向排列
-- `Delete` 或 `Backspace`：删除选中图层
-- `E`：导出 PNG
-- `方向键`：移动选中图层（`Shift + 方向键` 为 10px 步进）
+- `C`: start/stop crop mode
+- `X` or `Esc`: clear crop box
+- `R` or `Enter`: create new layer from crop
+- `B`: create fixed-size crop box
+- `G`: spread selected layers
+- `H`: align horizontally
+- `V`: align vertically
+- `Delete` or `Backspace`: delete selected layers
+- `E`: export PNG
+- `Arrow keys`: move selected layers (`Shift + Arrows` = 10px step)
 
-## 项目结构
+## Project Structure
 
 ```text
 index.html
