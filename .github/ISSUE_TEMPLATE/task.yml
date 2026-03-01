@@ -1,0 +1,83 @@
+name: Task
+description: Standard task template for Codex + GitHub + Notion flow
+title: "[TASK] <short title>"
+labels:
+  - type:chore
+  - prio:p2
+body:
+  - type: input
+    id: project_key
+    attributes:
+      label: Project Key
+      description: Stable project key (e.g. BOSSMAN, ROGUE)
+      placeholder: BOSSMAN
+    validations:
+      required: true
+  - type: dropdown
+    id: work_type
+    attributes:
+      label: Work Type
+      options:
+        - feature
+        - bug
+        - chore
+        - research
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0
+        - P1
+        - P2
+        - P3
+    validations:
+      required: true
+  - type: dropdown
+    id: estimate
+    attributes:
+      label: Estimate
+      options:
+        - XS
+        - S
+        - M
+        - L
+        - XL
+    validations:
+      required: true
+  - type: input
+    id: due_date
+    attributes:
+      label: Due Date
+      description: Optional, format YYYY-MM-DD
+      placeholder: 2026-03-15
+    validations:
+      required: false
+  - type: textarea
+    id: blocked_by
+    attributes:
+      label: Blocked By
+      description: Optional; reference blocking issues using #123 format
+      placeholder: "#101, #205"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Problem statement and constraints
+      placeholder: What is the problem and why now?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Definition of done
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true

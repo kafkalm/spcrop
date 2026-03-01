@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project Ops Guide
+    url: https://github.com
+    about: Use the task issue template for Codex execution tracking.
