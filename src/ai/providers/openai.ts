@@ -6,8 +6,11 @@ export interface OpenAIConfig {
   baseUrl: string;
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/$/, "");
+export function normalizeOpenAIBaseUrl(baseUrl: string): string {
+  const trimmed = (baseUrl || "https://api.openai.com").trim();
+  const noTrailingSlash = trimmed.replace(/\/+$/, "");
+  const noVersionSuffix = noTrailingSlash.replace(/\/v1$/i, "");
+  return noVersionSuffix || "https://api.openai.com";
 }
 
 async function ensureOk(response: Response): Promise<void> {
@@ -63,7 +66,7 @@ export function createOpenAIAdapter(getConfig: () => OpenAIConfig): ProviderAdap
         Authorization: `Bearer ${config.apiKey}`,
       };
 
-      const baseUrl = normalizeBaseUrl(config.baseUrl || "https://api.openai.com");
+      const baseUrl = normalizeOpenAIBaseUrl(config.baseUrl || "https://api.openai.com");
 
       if (req.mode === "text_to_image") {
         const response = await fetch(`${baseUrl}/v1/images/generations`, {

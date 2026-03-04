@@ -1,4 +1,5 @@
 import "./styles.css";
+import { resolveGlobalClipboardAction } from "./clipboard-shortcuts";
 import { createGalleryItemsFromAssets, markSelectedSource } from "./ai/gallery-store";
 import {
   loadAiHistory,
@@ -2686,18 +2687,26 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
     return;
   }
 
-  if (!typing && (event.ctrlKey || event.metaKey) && !event.altKey) {
-    const lowerKey = event.key.toLowerCase();
-    if (lowerKey === "c") {
-      event.preventDefault();
-      copyCropBtn.click();
-      return;
-    }
-    if (lowerKey === "v") {
-      event.preventDefault();
-      pasteCropBtn.click();
-      return;
-    }
+  const selection = window.getSelection();
+  const hasTextSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim().length > 0);
+  const clipboardAction = resolveGlobalClipboardAction({
+    key: event.key,
+    ctrlOrMeta: event.ctrlKey || event.metaKey,
+    altKey: event.altKey,
+    typing,
+    hasTextSelection,
+  });
+
+  if (clipboardAction === "copyCropSelection") {
+    event.preventDefault();
+    copyCropBtn.click();
+    return;
+  }
+
+  if (clipboardAction === "pasteCropSelection") {
+    event.preventDefault();
+    pasteCropBtn.click();
+    return;
   }
 
   if (!typing && event.key === "Backspace") {
