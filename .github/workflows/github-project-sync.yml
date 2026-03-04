@@ -1,0 +1,45 @@
+name: GitHub Project Sync
+
+on:
+  issues:
+    types: [opened, edited, reopened, closed, labeled, unlabeled]
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review, closed]
+  workflow_dispatch:
+
+concurrency:
+  group: github-project-write-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: ${{ hashFiles('.github/scripts/github_project_sync_runner.mjs') != '' }}
+        with:
+          node-version: '20'
+
+      - name: Sync event to GitHub Project via local runner (if present)
+        if: ${{ hashFiles('.github/scripts/github_project_sync_runner.mjs') != '' }}
+        env:
+          ORG_PROJECT_TOKEN: ${{ secrets.ORG_PROJECT_TOKEN }}
+          ORG_PROJECT_ID: ${{ vars.ORG_PROJECT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node .github/scripts/github_project_sync_runner.mjs
+
+      - name: Template fallback (no-op)
+        if: ${{ hashFiles('.github/scripts/github_project_sync_runner.mjs') == '' }}
+        run: |
+          echo "[template] .github/scripts/github_project_sync_runner.mjs not found; skipping project sync."
+          echo "[template] Add the runner script and required secrets/vars to enable project automation."
