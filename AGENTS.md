@@ -76,7 +76,7 @@ After issue creation (or discovery), Codex should:
 - Always implement new requirements in a dedicated git worktree (do not develop directly in the main workspace).
 - Do not create nested worktrees from inside an existing worktree; create new worktrees from the primary repository root.
 - Create/use branch: `<type>/<issue-number>-<slug>`.
-- Run `.github/scripts/claim_issue.sh <issue_number>` to lock early.
+- Lock early by creating/updating a Draft PR from the current branch that references the issue (`Refs #...`).
 - Ensure PR includes one of: `Resolves #...`, `Closes #...`, `Fixes #...`.
 - Keep PR focused to a single issue.
 - Keep `1 issue -> 1 open PR`.
@@ -94,7 +94,7 @@ When code changes are complete and commits are pushed to a non-default branch, C
 - If PR for current branch already exists (including Draft), update it instead of creating duplicate PR.
 - If no PR exists, create one immediately after successful push.
 - Draft policy:
-- `claim_issue.sh` may create Draft PR for early lock.
+- Create a Draft PR early to lock issue ownership during implementation.
 - When implementation is complete and ready for review, Codex must convert Draft PR to Ready (`gh pr ready`).
 - Codex must not leave PR in Draft when reporting task handoff complete.
 
@@ -174,10 +174,15 @@ gh issue create \
 rm -f "$ISSUE_BODY_FILE"
 ```
 
-Lock issue with Draft PR (recommended helper):
+Lock issue with Draft PR:
 
 ```bash
-.github/scripts/claim_issue.sh <issue_number>
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if gh pr view "$CURRENT_BRANCH" --json number >/dev/null 2>&1; then
+  gh pr edit "$CURRENT_BRANCH" --add-assignee "@me"
+else
+  gh pr create --draft --title "wip: <title>" --body "Refs #<issue_number>"
+fi
 ```
 
 Create PR (idempotent pattern):
