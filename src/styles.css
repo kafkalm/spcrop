@@ -327,13 +327,13 @@ button:hover {
 }
 
 .ai-task-title {
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 600;
   margin-bottom: 4px;
 }
 
 .ai-task-meta {
-  font-size: 11px;
+  font-size: 15px;
   color: var(--muted);
   line-height: 1.35;
 }
@@ -348,7 +348,7 @@ button:hover {
   width: auto;
   margin: 0;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 15px;
 }
 
 .ai-gallery {
@@ -398,6 +398,42 @@ button:hover {
 .shortcut-key.capturing {
   border-color: #ffb703;
   box-shadow: 0 0 0 1px rgba(255, 183, 3, 0.35) inset;
+}
+
+.ai-settings-modal {
+  width: min(640px, calc(100vw - 24px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0;
+}
+
+.ai-settings-modal::backdrop {
+  background: rgba(8, 12, 20, 0.72);
+}
+
+.ai-settings-modal-content {
+  margin: 0;
+  padding: 12px;
+}
+
+.ai-settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.ai-settings-modal-header h2 {
+  margin: 0;
+}
+
+.ai-settings-modal-header button {
+  width: auto;
+  margin: 0;
+  padding: 6px 10px;
 }
 
 

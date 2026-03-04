@@ -48,6 +48,12 @@ export async function ensureDirectoryPermission(handle: FileSystemDirectoryHandl
   return requested === "granted";
 }
 
+export async function queryDirectoryPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  const opts: FileSystemHandlePermissionDescriptor = { mode: "readwrite" };
+  const queried = await handle.queryPermission(opts);
+  return queried === "granted";
+}
+
 export async function writeBlobToDirectory(
   handle: FileSystemDirectoryHandle,
   blob: Blob,

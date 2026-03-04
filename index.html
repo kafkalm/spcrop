@@ -100,64 +100,9 @@
           <textarea id="aiNegativePrompt" rows="2" placeholder="可选：不希望出现的内容"></textarea>
         </div>
         <button id="generateAiBtn" type="button">生成 AI 图片</button>
+        <button id="openAiSettingsBtn" type="button">打开 AI 设置</button>
         <button id="chooseOutputDirBtn" type="button">选择输出目录</button>
         <div id="outputDirStatus" class="mini-status">输出目录：未设置（将回退为下载）</div>
-        <details id="aiSettingsDetails" class="ai-settings">
-          <summary>AI 设置（密钥/模型/回退）</summary>
-          <div class="row">
-            <label for="openaiApiKey">OpenAI Key</label>
-            <input id="openaiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-          </div>
-          <div class="row">
-            <label for="openaiBaseUrl">OpenAI Base</label>
-            <input id="openaiBaseUrl" type="text" value="https://api.openai.com" />
-          </div>
-          <div class="row">
-            <label for="openaiModel">OpenAI 模型</label>
-            <input id="openaiModel" type="text" value="gpt-image-1" />
-          </div>
-          <div class="row">
-            <label for="geminiApiKey">Gemini Key</label>
-            <input id="geminiApiKey" type="password" autocomplete="off" placeholder="AIza..." />
-          </div>
-          <div class="row">
-            <label for="geminiBaseUrl">Gemini Base</label>
-            <input id="geminiBaseUrl" type="text" value="https://generativelanguage.googleapis.com" />
-          </div>
-          <div class="row">
-            <label for="geminiModel">Gemini 模型</label>
-            <input id="geminiModel" type="text" value="gemini-2.5-flash-image-preview" />
-          </div>
-          <div class="row">
-            <label for="openrouterApiKey">OpenRouter Key</label>
-            <input id="openrouterApiKey" type="password" autocomplete="off" placeholder="sk-or-v1-..." />
-          </div>
-          <div class="row">
-            <label for="openrouterBaseUrl">OpenRouter Base</label>
-            <input id="openrouterBaseUrl" type="text" value="https://openrouter.ai/api/v1" />
-          </div>
-          <div class="row">
-            <label for="openrouterModel">OpenRouter 模型</label>
-            <input id="openrouterModel" type="text" value="openai/gpt-5-image" />
-          </div>
-          <div class="row">
-            <label for="aiOutputCount">张数</label>
-            <input id="aiOutputCount" type="number" min="1" max="4" value="1" />
-          </div>
-          <div class="row">
-            <label for="enableFallback">回退重试</label>
-            <input id="enableFallback" type="checkbox" checked />
-          </div>
-          <div class="row">
-            <label for="fallbackProvider">回退 Provider</label>
-            <select id="fallbackProvider">
-              <option value="">不启用</option>
-              <option value="openai">OpenAI</option>
-              <option value="gemini">Gemini</option>
-              <option value="openrouter">OpenRouter</option>
-            </select>
-          </div>
-        </details>
 
         <h2>AI 任务</h2>
         <div id="aiTaskList" class="ai-task-list"></div>
@@ -166,6 +111,68 @@
         <div id="aiGallery" class="ai-gallery"></div>
       </aside>
     </div>
+
+    <dialog id="aiSettingsModal" class="ai-settings-modal">
+      <form method="dialog" class="ai-settings-modal-content">
+        <div class="ai-settings-modal-header">
+          <h2>AI 设置</h2>
+          <button id="closeAiSettingsBtn" type="button">关闭</button>
+        </div>
+        <div class="row">
+          <label for="openaiApiKey">OpenAI Key</label>
+          <input id="openaiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+        </div>
+        <div class="row">
+          <label for="openaiBaseUrl">OpenAI Base</label>
+          <input id="openaiBaseUrl" type="text" value="https://api.openai.com" />
+        </div>
+        <div class="row">
+          <label for="openaiModel">OpenAI 模型</label>
+          <input id="openaiModel" type="text" value="gpt-image-1" />
+        </div>
+        <div class="row">
+          <label for="geminiApiKey">Gemini Key</label>
+          <input id="geminiApiKey" type="password" autocomplete="off" placeholder="AIza..." />
+        </div>
+        <div class="row">
+          <label for="geminiBaseUrl">Gemini Base</label>
+          <input id="geminiBaseUrl" type="text" value="https://generativelanguage.googleapis.com" />
+        </div>
+        <div class="row">
+          <label for="geminiModel">Gemini 模型</label>
+          <input id="geminiModel" type="text" value="gemini-2.5-flash-image-preview" />
+        </div>
+        <div class="row">
+          <label for="openrouterApiKey">OpenRouter Key</label>
+          <input id="openrouterApiKey" type="password" autocomplete="off" placeholder="sk-or-v1-..." />
+        </div>
+        <div class="row">
+          <label for="openrouterBaseUrl">OpenRouter Base</label>
+          <input id="openrouterBaseUrl" type="text" value="https://openrouter.ai/api/v1" />
+        </div>
+        <div class="row">
+          <label for="openrouterModel">OpenRouter 模型</label>
+          <input id="openrouterModel" type="text" value="openai/gpt-5-image" />
+        </div>
+        <div class="row">
+          <label for="aiOutputCount">张数</label>
+          <input id="aiOutputCount" type="number" min="1" max="4" value="1" />
+        </div>
+        <div class="row">
+          <label for="enableFallback">回退重试</label>
+          <input id="enableFallback" type="checkbox" checked />
+        </div>
+        <div class="row">
+          <label for="fallbackProvider">回退 Provider</label>
+          <select id="fallbackProvider">
+            <option value="">不启用</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

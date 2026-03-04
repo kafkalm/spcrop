@@ -13,6 +13,7 @@ import {
   downloadBlobFallback,
   ensureDirectoryPermission,
   formatOutputFilename,
+  queryDirectoryPermission,
   selectOutputDirectory,
   supportsDirectoryPicker,
   writeBlobToDirectory,
@@ -243,10 +244,13 @@ const aiSourceKindSelect = mustGet<HTMLSelectElement>("aiSourceKind");
 const aiPromptInput = mustGet<HTMLTextAreaElement>("aiPrompt");
 const aiNegativePromptInput = mustGet<HTMLTextAreaElement>("aiNegativePrompt");
 const generateAiBtn = mustGet<HTMLButtonElement>("generateAiBtn");
+const openAiSettingsBtn = mustGet<HTMLButtonElement>("openAiSettingsBtn");
 const chooseOutputDirBtn = mustGet<HTMLButtonElement>("chooseOutputDirBtn");
 const outputDirStatus = mustGet<HTMLDivElement>("outputDirStatus");
 const aiTaskList = mustGet<HTMLDivElement>("aiTaskList");
 const aiGallery = mustGet<HTMLDivElement>("aiGallery");
+const aiSettingsModal = mustGet<HTMLDialogElement>("aiSettingsModal");
+const closeAiSettingsBtn = mustGet<HTMLButtonElement>("closeAiSettingsBtn");
 const openaiApiKeyInput = mustGet<HTMLInputElement>("openaiApiKey");
 const openaiBaseUrlInput = mustGet<HTMLInputElement>("openaiBaseUrl");
 const openaiModelInput = mustGet<HTMLInputElement>("openaiModel");
@@ -2049,7 +2053,7 @@ async function restoreAiState(): Promise<void> {
     const handle = await loadOutputDirectoryHandle();
     if (handle) {
       aiState.outputDirHandle = handle;
-      aiState.outputDirReady = await ensureDirectoryPermission(handle);
+      aiState.outputDirReady = await queryDirectoryPermission(handle);
     }
   } catch {
     aiState.outputDirHandle = null;
@@ -2309,6 +2313,25 @@ aiModeSelect.addEventListener("change", () => {
 
 aiSourceKindSelect.addEventListener("change", () => {
   aiState.selectedSourceKind = getSelectedSourceKind();
+});
+
+openAiSettingsBtn.addEventListener("click", () => {
+  aiSettingsModal.showModal();
+});
+
+closeAiSettingsBtn.addEventListener("click", () => {
+  aiSettingsModal.close();
+});
+
+aiSettingsModal.addEventListener("click", (event) => {
+  const rect = aiSettingsModal.getBoundingClientRect();
+  const inside = rect.top <= event.clientY
+    && event.clientY <= rect.top + rect.height
+    && rect.left <= event.clientX
+    && event.clientX <= rect.left + rect.width;
+  if (!inside) {
+    aiSettingsModal.close();
+  }
 });
 
 [
