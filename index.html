@@ -51,6 +51,90 @@
         <button id="exportBtn" type="button">导出 PNG（选中优先） (E)</button>
         <p class="tips">提示：滚轮可上下左右平移画布；中键也可拖动画布。缩放修饰键可在下方设置（默认 Alt/Option(⌥)+滚轮）。画布带像素标尺。框选后可拖动选框，Shift 锁定 1:1。支持一键去除仿 PNG 格子背景，也支持 Ctrl/Cmd+C 复制框选、Ctrl/Cmd+V 粘贴为新图层。按 Backspace 可删除框选内容（无框选时删除选中图层）。在画布中可用 Alt/Option+点击进行多图层点选。</p>
 
+        <h2>AI 生图</h2>
+        <div class="row">
+          <label for="aiProvider">Provider</label>
+          <select id="aiProvider">
+            <option value="openai">OpenAI (GPT)</option>
+            <option value="gemini">NanoBanana (Gemini)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="aiMode">模式</label>
+          <select id="aiMode">
+            <option value="text_to_image">文生图</option>
+            <option value="image_to_image">图生图</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="aiSourceKind">来源</label>
+          <select id="aiSourceKind">
+            <option value="crop">当前框选</option>
+            <option value="active_layer">当前活动图层</option>
+            <option value="gallery_item">素材区选中图</option>
+          </select>
+        </div>
+        <div class="row row-textarea">
+          <label for="aiPrompt">Prompt</label>
+          <textarea id="aiPrompt" rows="4" placeholder="描述你想生成的内容"></textarea>
+        </div>
+        <div class="row row-textarea">
+          <label for="aiNegativePrompt">负向词</label>
+          <textarea id="aiNegativePrompt" rows="2" placeholder="可选：不希望出现的内容"></textarea>
+        </div>
+        <button id="generateAiBtn" type="button">生成 AI 图片</button>
+        <button id="chooseOutputDirBtn" type="button">选择输出目录</button>
+        <div id="outputDirStatus" class="mini-status">输出目录：未设置（将回退为下载）</div>
+        <details id="aiSettingsDetails" class="ai-settings">
+          <summary>AI 设置（密钥/模型/回退）</summary>
+          <div class="row">
+            <label for="openaiApiKey">OpenAI Key</label>
+            <input id="openaiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+          </div>
+          <div class="row">
+            <label for="openaiBaseUrl">OpenAI Base</label>
+            <input id="openaiBaseUrl" type="text" value="https://api.openai.com" />
+          </div>
+          <div class="row">
+            <label for="openaiModel">OpenAI 模型</label>
+            <input id="openaiModel" type="text" value="gpt-image-1" />
+          </div>
+          <div class="row">
+            <label for="geminiApiKey">Gemini Key</label>
+            <input id="geminiApiKey" type="password" autocomplete="off" placeholder="AIza..." />
+          </div>
+          <div class="row">
+            <label for="geminiBaseUrl">Gemini Base</label>
+            <input id="geminiBaseUrl" type="text" value="https://generativelanguage.googleapis.com" />
+          </div>
+          <div class="row">
+            <label for="geminiModel">Gemini 模型</label>
+            <input id="geminiModel" type="text" value="gemini-2.5-flash-image-preview" />
+          </div>
+          <div class="row">
+            <label for="aiOutputCount">张数</label>
+            <input id="aiOutputCount" type="number" min="1" max="4" value="1" />
+          </div>
+          <div class="row">
+            <label for="enableFallback">回退重试</label>
+            <input id="enableFallback" type="checkbox" checked />
+          </div>
+          <div class="row">
+            <label for="fallbackProvider">回退 Provider</label>
+            <select id="fallbackProvider">
+              <option value="">不启用</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
+        </details>
+
+        <h2>AI 任务</h2>
+        <div id="aiTaskList" class="ai-task-list"></div>
+
+        <h2>素材候选区</h2>
+        <div id="aiGallery" class="ai-gallery"></div>
+
         <h2>快捷键设置</h2>
         <div class="row">
           <label for="zoomModifierSelect">缩放键</label>

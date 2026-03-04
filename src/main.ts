@@ -1,4 +1,36 @@
 import "./styles.css";
+import { createGalleryItemsFromAssets, markSelectedSource } from "./ai/gallery-store";
+import {
+  loadAiHistory,
+  loadOutputDirectoryHandle,
+  saveAiHistory,
+  saveOutputDirectoryHandle,
+} from "./ai/history-idb";
+import { dataUrlToBlob } from "./ai/image-utils";
+import { buildImageInput, canvasToPngBlob, imageBitmapToPngBlob } from "./ai/image-source";
+import {
+  downloadBlobFallback,
+  ensureDirectoryPermission,
+  formatOutputFilename,
+  selectOutputDirectory,
+  supportsDirectoryPicker,
+  writeBlobToDirectory,
+} from "./ai/fs-output";
+import { runWithFallback } from "./ai/provider-router";
+import { createTaskRecord, patchTaskRecord } from "./ai/task-store";
+import { createGeminiAdapter } from "./ai/providers/gemini";
+import { createOpenAIAdapter } from "./ai/providers/openai";
+import type {
+  AiSettings,
+  GalleryItem,
+  GenerateRequest,
+  GenerationMode,
+  ImageInput,
+  ImageSourceKind,
+  PersistedAiState,
+  ProviderId,
+  TaskRecord,
+} from "./ai/types";
 
 type LayerImage = ImageBitmap | HTMLCanvasElement;
 
@@ -83,6 +115,30 @@ type ZoomModifier = "Alt" | "Ctrl" | "Meta" | "Shift" | "None";
 
 const SHORTCUT_STORAGE_KEY = "spcrop.shortcuts.v1";
 const ZOOM_MODIFIER_STORAGE_KEY = "spcrop.zoomModifier.v1";
+const AI_SETTINGS_STORAGE_KEY = "spcrop.ai.settings.v1";
+
+const DEFAULT_AI_SETTINGS: AiSettings = {
+  openaiApiKey: "",
+  openaiBaseUrl: "https://api.openai.com",
+  openaiModel: "gpt-image-1",
+  geminiApiKey: "",
+  geminiBaseUrl: "https://generativelanguage.googleapis.com",
+  geminiModel: "gemini-2.5-flash-image-preview",
+  enableFallback: true,
+  fallbackProvider: "",
+  outputCount: 1,
+};
+
+interface AiRuntimeState {
+  settings: AiSettings;
+  tasks: TaskRecord[];
+  gallery: GalleryItem[];
+  selectedSourceKind: ImageSourceKind;
+  outputDirHandle: FileSystemDirectoryHandle | null;
+  outputDirReady: boolean;
+  taskAbortControllers: Map<string, AbortController>;
+  persistingHistory: Promise<void> | null;
+}
 
 const SHORTCUT_DEFS: ShortcutDef[] = [
   { action: "toggleCropMode", label: "开始/结束框选", defaultKey: "C" },
@@ -175,6 +231,25 @@ const zoomModifierSelect = mustGet<HTMLSelectElement>("zoomModifierSelect");
 const layerList = mustGet<HTMLUListElement>("layerList");
 const shortcutList = mustGet<HTMLDivElement>("shortcutList");
 const resetShortcutBtn = mustGet<HTMLButtonElement>("resetShortcutBtn");
+const aiProviderSelect = mustGet<HTMLSelectElement>("aiProvider");
+const aiModeSelect = mustGet<HTMLSelectElement>("aiMode");
+const aiSourceKindSelect = mustGet<HTMLSelectElement>("aiSourceKind");
+const aiPromptInput = mustGet<HTMLTextAreaElement>("aiPrompt");
+const aiNegativePromptInput = mustGet<HTMLTextAreaElement>("aiNegativePrompt");
+const generateAiBtn = mustGet<HTMLButtonElement>("generateAiBtn");
+const chooseOutputDirBtn = mustGet<HTMLButtonElement>("chooseOutputDirBtn");
+const outputDirStatus = mustGet<HTMLDivElement>("outputDirStatus");
+const aiTaskList = mustGet<HTMLDivElement>("aiTaskList");
+const aiGallery = mustGet<HTMLDivElement>("aiGallery");
+const openaiApiKeyInput = mustGet<HTMLInputElement>("openaiApiKey");
+const openaiBaseUrlInput = mustGet<HTMLInputElement>("openaiBaseUrl");
+const openaiModelInput = mustGet<HTMLInputElement>("openaiModel");
+const geminiApiKeyInput = mustGet<HTMLInputElement>("geminiApiKey");
+const geminiBaseUrlInput = mustGet<HTMLInputElement>("geminiBaseUrl");
+const geminiModelInput = mustGet<HTMLInputElement>("geminiModel");
+const aiOutputCountInput = mustGet<HTMLInputElement>("aiOutputCount");
+const enableFallbackInput = mustGet<HTMLInputElement>("enableFallback");
+const fallbackProviderSelect = mustGet<HTMLSelectElement>("fallbackProvider");
 
 function defaultShortcutMap(): Record<ShortcutAction, string> {
   const map = {} as Record<ShortcutAction, string>;
@@ -210,6 +285,17 @@ const state: AppState = {
   dragStartPointer: null,
   clipboardImage: null,
   clipboardPasteCursor: null,
+};
+
+const aiState: AiRuntimeState = {
+  settings: { ...DEFAULT_AI_SETTINGS },
+  tasks: [],
+  gallery: [],
+  selectedSourceKind: "crop",
+  outputDirHandle: null,
+  outputDirReady: false,
+  taskAbortControllers: new Map<string, AbortController>(),
+  persistingHistory: null,
 };
 
 function setStatus(text: string): void {
@@ -1032,6 +1118,12 @@ async function addLayerFromFile(file: File): Promise<void> {
   setStatus(`已导入图层: ${layer.name}`);
 }
 
+async function addLayerFromBlob(blob: Blob, baseName: string): Promise<void> {
+  const ext = blob.type.includes("jpeg") ? "jpg" : "png";
+  const file = new File([blob], `${baseName}.${ext}`, { type: blob.type || "image/png" });
+  await addLayerFromFile(file);
+}
+
 async function handleFiles(files: File[]): Promise<void> {
   const imageFiles = files.filter((f) => f.type.startsWith("image/"));
   if (imageFiles.length === 0) {
@@ -1438,6 +1530,508 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+function isProviderId(value: string): value is ProviderId {
+  return value === "openai" || value === "gemini";
+}
+
+function isGenerationMode(value: string): value is GenerationMode {
+  return value === "text_to_image" || value === "image_to_image";
+}
+
+function isImageSourceKind(value: string): value is ImageSourceKind {
+  return value === "crop" || value === "active_layer" || value === "gallery_item";
+}
+
+function loadAiSettings(): void {
+  try {
+    const raw = window.localStorage.getItem(AI_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      aiState.settings = { ...DEFAULT_AI_SETTINGS };
+      return;
+    }
+    const parsed = JSON.parse(raw) as Partial<AiSettings>;
+    aiState.settings = {
+      ...DEFAULT_AI_SETTINGS,
+      ...parsed,
+      outputCount: clamp(Number(parsed.outputCount ?? DEFAULT_AI_SETTINGS.outputCount), 1, 4),
+      fallbackProvider: parsed.fallbackProvider === "openai" || parsed.fallbackProvider === "gemini"
+        ? parsed.fallbackProvider
+        : "",
+    };
+  } catch {
+    aiState.settings = { ...DEFAULT_AI_SETTINGS };
+  }
+}
+
+function saveAiSettings(): void {
+  try {
+    window.localStorage.setItem(AI_SETTINGS_STORAGE_KEY, JSON.stringify(aiState.settings));
+  } catch {
+    // Ignore localStorage failures.
+  }
+}
+
+function syncAiSettingsToUI(): void {
+  openaiApiKeyInput.value = aiState.settings.openaiApiKey;
+  openaiBaseUrlInput.value = aiState.settings.openaiBaseUrl;
+  openaiModelInput.value = aiState.settings.openaiModel;
+  geminiApiKeyInput.value = aiState.settings.geminiApiKey;
+  geminiBaseUrlInput.value = aiState.settings.geminiBaseUrl;
+  geminiModelInput.value = aiState.settings.geminiModel;
+  aiOutputCountInput.value = String(aiState.settings.outputCount);
+  enableFallbackInput.checked = aiState.settings.enableFallback;
+  fallbackProviderSelect.value = aiState.settings.fallbackProvider;
+}
+
+function syncAiSettingsFromUI(): void {
+  aiState.settings.openaiApiKey = openaiApiKeyInput.value.trim();
+  aiState.settings.openaiBaseUrl = openaiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openaiBaseUrl;
+  aiState.settings.openaiModel = openaiModelInput.value.trim() || DEFAULT_AI_SETTINGS.openaiModel;
+  aiState.settings.geminiApiKey = geminiApiKeyInput.value.trim();
+  aiState.settings.geminiBaseUrl = geminiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.geminiBaseUrl;
+  aiState.settings.geminiModel = geminiModelInput.value.trim() || DEFAULT_AI_SETTINGS.geminiModel;
+  aiState.settings.outputCount = clamp(Number(aiOutputCountInput.value) || 1, 1, 4);
+  aiState.settings.enableFallback = enableFallbackInput.checked;
+  const fallbackValue = fallbackProviderSelect.value;
+  aiState.settings.fallbackProvider = isProviderId(fallbackValue) ? fallbackValue : "";
+  saveAiSettings();
+}
+
+function getActiveProvider(): ProviderId {
+  const raw = aiProviderSelect.value;
+  return isProviderId(raw) ? raw : "openai";
+}
+
+function getActiveMode(): GenerationMode {
+  const raw = aiModeSelect.value;
+  return isGenerationMode(raw) ? raw : "text_to_image";
+}
+
+function getSelectedSourceKind(): ImageSourceKind {
+  const raw = aiSourceKindSelect.value;
+  return isImageSourceKind(raw) ? raw : "crop";
+}
+
+function makeProviderRequest(req: GenerateRequest): GenerateRequest {
+  const fallback = aiState.settings.enableFallback
+    ? (aiState.settings.fallbackProvider || (req.provider === "openai" ? "gemini" : "openai"))
+    : undefined;
+  const fallbackProvider = fallback && fallback !== req.provider ? fallback : undefined;
+  return {
+    ...req,
+    fallbackProvider,
+  };
+}
+
+const openaiAdapter = createOpenAIAdapter(() => ({
+  apiKey: aiState.settings.openaiApiKey,
+  baseUrl: aiState.settings.openaiBaseUrl,
+}));
+
+const geminiAdapter = createGeminiAdapter(() => ({
+  apiKey: aiState.settings.geminiApiKey,
+  baseUrl: aiState.settings.geminiBaseUrl,
+}));
+
+function refreshOutputDirStatus(): void {
+  if (!supportsDirectoryPicker()) {
+    outputDirStatus.textContent = "输出目录：浏览器不支持目录授权，将回退为下载";
+    return;
+  }
+  if (!aiState.outputDirHandle) {
+    outputDirStatus.textContent = "输出目录：未设置（将回退为下载）";
+    return;
+  }
+  outputDirStatus.textContent = aiState.outputDirReady
+    ? "输出目录：已授权，可直接写入"
+    : "输出目录：句柄已记住，但当前未授权（将回退下载）";
+}
+
+function taskErrorToMessage(error: unknown): string {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "任务已取消";
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "任务失败";
+}
+
+function renderAiTaskList(): void {
+  aiTaskList.innerHTML = "";
+  const tasks = [...aiState.tasks].sort((a, b) => b.createdAt - a.createdAt);
+  for (const task of tasks) {
+    const item = document.createElement("div");
+    item.className = "ai-task-item";
+
+    const title = document.createElement("div");
+    title.className = "ai-task-title";
+    title.textContent = `[${task.provider}] ${task.status}`;
+
+    const meta = document.createElement("div");
+    meta.className = "ai-task-meta";
+    meta.textContent = `${new Date(task.createdAt).toLocaleString()} · ${task.mode} · ${task.prompt}`;
+    item.appendChild(title);
+    item.appendChild(meta);
+
+    if (task.error) {
+      const err = document.createElement("div");
+      err.className = "ai-task-meta";
+      err.textContent = `错误：${task.error}`;
+      item.appendChild(err);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "ai-task-actions";
+
+    if (task.status === "running") {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.textContent = "取消";
+      cancelBtn.addEventListener("click", () => {
+        const controller = aiState.taskAbortControllers.get(task.id);
+        if (controller) {
+          controller.abort();
+        }
+      });
+      actions.appendChild(cancelBtn);
+    }
+
+    if (task.status === "failed" || task.status === "canceled") {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.textContent = "重试（当前设置）";
+      retryBtn.addEventListener("click", () => {
+        aiPromptInput.value = task.prompt;
+        aiModeSelect.value = task.mode;
+        aiProviderSelect.value = task.provider;
+        generateAiBtn.click();
+      });
+      actions.appendChild(retryBtn);
+    }
+
+    if (actions.childElementCount > 0) {
+      item.appendChild(actions);
+    }
+    aiTaskList.appendChild(item);
+  }
+}
+
+function ensureAssetBlob(item: GalleryItem): Blob {
+  if (item.asset.blob instanceof Blob) {
+    return item.asset.blob;
+  }
+  return dataUrlToBlob(item.asset.thumbDataUrl);
+}
+
+async function persistAiHistory(): Promise<void> {
+  const snapshot: PersistedAiState = {
+    tasks: aiState.tasks,
+    gallery: aiState.gallery,
+  };
+  const run = async () => {
+    try {
+      await saveAiHistory(snapshot);
+    } catch {
+      // Ignore persistence errors.
+    }
+  };
+  aiState.persistingHistory = (aiState.persistingHistory ?? Promise.resolve()).then(run, run);
+  await aiState.persistingHistory;
+}
+
+function renderAiGallery(): void {
+  aiGallery.innerHTML = "";
+  const items = [...aiState.gallery].sort((a, b) => b.createdAt - a.createdAt);
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "ai-gallery-item";
+    if (item.selectedAsSource) {
+      card.classList.add("selected-source");
+    }
+
+    const img = document.createElement("img");
+    img.className = "ai-gallery-thumb";
+    img.src = item.asset.thumbDataUrl;
+    img.alt = item.prompt.slice(0, 60);
+
+    const meta = document.createElement("div");
+    meta.className = "ai-gallery-meta";
+    meta.textContent = `${item.provider} · ${new Date(item.createdAt).toLocaleTimeString()}`;
+
+    const actions = document.createElement("div");
+    actions.className = "ai-gallery-actions";
+
+    const addLayerBtn = document.createElement("button");
+    addLayerBtn.type = "button";
+    addLayerBtn.textContent = "加入图层";
+    addLayerBtn.addEventListener("click", async () => {
+      const blob = ensureAssetBlob(item);
+      await addLayerFromBlob(blob, `ai-${item.provider}-${item.id}`);
+      setStatus("已将候选图加入图层");
+    });
+
+    const selectSourceBtn = document.createElement("button");
+    selectSourceBtn.type = "button";
+    selectSourceBtn.textContent = "设为图生图来源";
+    selectSourceBtn.addEventListener("click", () => {
+      aiState.gallery = markSelectedSource(aiState.gallery, item.id);
+      aiSourceKindSelect.value = "gallery_item";
+      aiState.selectedSourceKind = "gallery_item";
+      renderAiGallery();
+      persistAiHistory();
+      setStatus("已设置素材来源：候选区选中图");
+    });
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.textContent = "保存到输出目录";
+    saveBtn.addEventListener("click", async () => {
+      const blob = ensureAssetBlob(item);
+      const index = Math.max(1, Number(item.id.split("-").pop() ?? "1") + 1);
+      const filename = formatOutputFilename({
+        provider: item.provider,
+        taskId: item.taskId,
+        index,
+      });
+      if (aiState.outputDirHandle && aiState.outputDirReady) {
+        try {
+          await writeBlobToDirectory(aiState.outputDirHandle, blob, filename);
+          setStatus(`已保存：${filename}`);
+          return;
+        } catch {
+          aiState.outputDirReady = false;
+          refreshOutputDirStatus();
+        }
+      }
+      downloadBlobFallback(blob, filename);
+      setStatus(`目录不可写，已下载：${filename}`);
+    });
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
+    downloadBtn.textContent = "下载";
+    downloadBtn.addEventListener("click", () => {
+      const blob = ensureAssetBlob(item);
+      const index = Math.max(1, Number(item.id.split("-").pop() ?? "1") + 1);
+      const filename = formatOutputFilename({
+        provider: item.provider,
+        taskId: item.taskId,
+        index,
+      });
+      downloadBlobFallback(blob, filename);
+      setStatus(`已下载：${filename}`);
+    });
+
+    actions.appendChild(addLayerBtn);
+    actions.appendChild(selectSourceBtn);
+    actions.appendChild(saveBtn);
+    actions.appendChild(downloadBtn);
+    card.appendChild(img);
+    card.appendChild(meta);
+    card.appendChild(actions);
+    aiGallery.appendChild(card);
+  }
+}
+
+async function resolveImageSource(kind: ImageSourceKind): Promise<ImageInput> {
+  if (kind === "crop") {
+    const slice = getActiveCropSlice();
+    if (!slice) {
+      throw new Error("当前没有可用框选区域");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = slice.sw;
+    canvas.height = slice.sh;
+    const cctx = canvas.getContext("2d");
+    if (!cctx) {
+      throw new Error("2D 上下文不可用");
+    }
+    cctx.drawImage(slice.layer.image, slice.sx, slice.sy, slice.sw, slice.sh, 0, 0, slice.sw, slice.sh);
+    const blob = await canvasToPngBlob(canvas);
+    return buildImageInput("crop", blob, "crop-source.png");
+  }
+
+  if (kind === "active_layer") {
+    const active = state.activeLayerId !== null ? getLayerById(state.activeLayerId) : null;
+    if (!active) {
+      throw new Error("请先选中活动图层");
+    }
+    const blob = active.image instanceof HTMLCanvasElement
+      ? await canvasToPngBlob(active.image)
+      : await imageBitmapToPngBlob(active.image);
+    return buildImageInput("active_layer", blob, "active-layer.png");
+  }
+
+  const selected = aiState.gallery.find((item) => item.selectedAsSource);
+  if (!selected) {
+    throw new Error("请先在素材候选区选择一张来源图");
+  }
+  const blob = ensureAssetBlob(selected);
+  return buildImageInput("gallery_item", blob, "gallery-source.png");
+}
+
+async function writeOutputByPolicy(blob: Blob, provider: ProviderId, taskId: string, index: number): Promise<string> {
+  const filename = formatOutputFilename({
+    provider,
+    taskId,
+    index,
+  });
+  if (aiState.outputDirHandle && aiState.outputDirReady) {
+    try {
+      await writeBlobToDirectory(aiState.outputDirHandle, blob, filename);
+      return filename;
+    } catch {
+      aiState.outputDirReady = false;
+      refreshOutputDirStatus();
+    }
+  }
+  downloadBlobFallback(blob, filename);
+  return `download:${filename}`;
+}
+
+function upsertTask(task: TaskRecord): void {
+  const index = aiState.tasks.findIndex((x) => x.id === task.id);
+  if (index === -1) {
+    aiState.tasks.push(task);
+    return;
+  }
+  aiState.tasks[index] = task;
+}
+
+async function createGenerateRequestFromUI(): Promise<GenerateRequest> {
+  syncAiSettingsFromUI();
+  const provider = getActiveProvider();
+  const mode = getActiveMode();
+  const prompt = aiPromptInput.value.trim();
+  const negativePrompt = aiNegativePromptInput.value.trim();
+  const sourceKind = getSelectedSourceKind();
+  aiState.selectedSourceKind = sourceKind;
+
+  if (!prompt) {
+    throw new Error("Prompt 不能为空");
+  }
+
+  let imageSource: ImageInput | undefined;
+  if (mode === "image_to_image") {
+    imageSource = await resolveImageSource(sourceKind);
+  }
+
+  const model = provider === "openai" ? aiState.settings.openaiModel : aiState.settings.geminiModel;
+  const request = makeProviderRequest({
+    provider,
+    mode,
+    prompt,
+    negativePrompt: negativePrompt || undefined,
+    imageSource,
+    model,
+    outputCount: aiState.settings.outputCount,
+  });
+  return request;
+}
+
+async function runGenerateTask(request: GenerateRequest): Promise<void> {
+  const baseTask = createTaskRecord(request);
+  upsertTask(baseTask);
+  renderAiTaskList();
+  await persistAiHistory();
+
+  const runningTask = patchTaskRecord(baseTask, {
+    status: "running",
+    startedAt: Date.now(),
+    error: undefined,
+  });
+  upsertTask(runningTask);
+  renderAiTaskList();
+
+  const controller = new AbortController();
+  aiState.taskAbortControllers.set(baseTask.id, controller);
+
+  try {
+    const result = await runWithFallback(request, { openai: openaiAdapter, gemini: geminiAdapter }, controller.signal);
+    const outputFiles: string[] = [];
+    for (let i = 0; i < result.assets.length; i++) {
+      const asset = result.assets[i];
+      // eslint-disable-next-line no-await-in-loop
+      const file = await writeOutputByPolicy(asset.blob, result.providerUsed, baseTask.id, i + 1);
+      outputFiles.push(file);
+    }
+
+    const succeeded = patchTaskRecord(runningTask, {
+      status: "succeeded",
+      finishedAt: Date.now(),
+      fallbackFrom: result.fallbackFrom ?? undefined,
+      outputFiles,
+    });
+    succeeded.provider = result.providerUsed;
+    succeeded.outputs = result.assets;
+    upsertTask(succeeded);
+
+    const galleryItems = createGalleryItemsFromAssets({
+      taskId: baseTask.id,
+      provider: result.providerUsed,
+      prompt: request.prompt,
+      assets: result.assets,
+    });
+    aiState.gallery = [...galleryItems, ...aiState.gallery].slice(0, 500);
+
+    setStatus(`AI 生成完成：${result.assets.length} 张 (${result.providerUsed})`);
+  } catch (error) {
+    const message = taskErrorToMessage(error);
+    const failed = patchTaskRecord(runningTask, {
+      status: message === "任务已取消" ? "canceled" : "failed",
+      error: message,
+      finishedAt: Date.now(),
+    });
+    upsertTask(failed);
+    setStatus(`AI 任务失败：${message}`);
+  } finally {
+    aiState.taskAbortControllers.delete(baseTask.id);
+    renderAiTaskList();
+    renderAiGallery();
+    await persistAiHistory();
+  }
+}
+
+async function restoreAiState(): Promise<void> {
+  loadAiSettings();
+  syncAiSettingsToUI();
+  aiState.selectedSourceKind = getSelectedSourceKind();
+
+  try {
+    const history = await loadAiHistory();
+    aiState.tasks = history.tasks;
+    aiState.gallery = history.gallery.map((item) => {
+      const blob = item.asset.blob instanceof Blob ? item.asset.blob : dataUrlToBlob(item.asset.thumbDataUrl);
+      return {
+        ...item,
+        asset: {
+          ...item.asset,
+          blob,
+        },
+      };
+    });
+  } catch {
+    aiState.tasks = [];
+    aiState.gallery = [];
+  }
+
+  try {
+    const handle = await loadOutputDirectoryHandle();
+    if (handle) {
+      aiState.outputDirHandle = handle;
+      aiState.outputDirReady = await ensureDirectoryPermission(handle);
+    }
+  } catch {
+    aiState.outputDirHandle = null;
+    aiState.outputDirReady = false;
+  }
+
+  refreshOutputDirStatus();
+  renderAiTaskList();
+  renderAiGallery();
+}
+
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
@@ -1675,6 +2269,63 @@ zoomModifierSelect.addEventListener("change", () => {
   state.zoomModifier = value;
   saveZoomModifier();
   setStatus(`已更新缩放修饰键：${zoomModifierLabel(state.zoomModifier)} + 滚轮`);
+});
+
+aiModeSelect.addEventListener("change", () => {
+  const mode = getActiveMode();
+  const imageMode = mode === "image_to_image";
+  aiSourceKindSelect.disabled = !imageMode;
+  setStatus(imageMode ? "AI 模式：图生图（需要来源图）" : "AI 模式：文生图");
+});
+
+aiSourceKindSelect.addEventListener("change", () => {
+  aiState.selectedSourceKind = getSelectedSourceKind();
+});
+
+[
+  openaiApiKeyInput,
+  openaiBaseUrlInput,
+  openaiModelInput,
+  geminiApiKeyInput,
+  geminiBaseUrlInput,
+  geminiModelInput,
+  aiOutputCountInput,
+  enableFallbackInput,
+  fallbackProviderSelect,
+].forEach((el) => {
+  el.addEventListener("change", () => {
+    syncAiSettingsFromUI();
+  });
+});
+
+chooseOutputDirBtn.addEventListener("click", async () => {
+  if (!supportsDirectoryPicker()) {
+    setStatus("当前浏览器不支持目录授权写入，将继续使用下载回退");
+    refreshOutputDirStatus();
+    return;
+  }
+  try {
+    const handle = await selectOutputDirectory();
+    const granted = await ensureDirectoryPermission(handle);
+    aiState.outputDirHandle = handle;
+    aiState.outputDirReady = granted;
+    await saveOutputDirectoryHandle(handle);
+    refreshOutputDirStatus();
+    setStatus(granted ? "输出目录已设置并授权" : "已记住目录句柄，但未获取写入权限");
+  } catch (error) {
+    const message = taskErrorToMessage(error);
+    setStatus(`设置输出目录失败：${message}`);
+  }
+});
+
+generateAiBtn.addEventListener("click", async () => {
+  try {
+    const request = await createGenerateRequestFromUI();
+    await runGenerateTask(request);
+  } catch (error) {
+    const message = taskErrorToMessage(error);
+    setStatus(`无法开始 AI 任务：${message}`);
+  }
 });
 
 stage.addEventListener("mousedown", (event: MouseEvent) => {
@@ -2107,3 +2758,11 @@ refreshActionButtonLabels();
 setStatus(`拖入图片开始编辑。滚轮平移，${zoomModifierLabel(state.zoomModifier)}+滚轮缩放；可在右侧快捷键设置中自定义按键。`);
 refreshLayerList();
 render();
+
+restoreAiState()
+  .then(() => {
+    aiModeSelect.dispatchEvent(new Event("change"));
+  })
+  .catch(() => {
+    refreshOutputDirStatus();
+  });
