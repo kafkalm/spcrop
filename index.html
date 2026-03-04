@@ -7,24 +7,7 @@
   </head>
   <body>
     <div class="app">
-      <section class="workspace">
-        <div class="toolbar">
-          <button id="cropModeBtn" type="button">开始框选 (C)</button>
-          <button id="clearCropBtn" type="button">清除框选 (X/Esc)</button>
-          <span id="statusText">拖入图片开始编辑</span>
-        </div>
-        <div class="canvas-shell">
-          <div class="ruler-corner"></div>
-          <canvas id="rulerTop" class="ruler-top"></canvas>
-          <canvas id="rulerLeft" class="ruler-left"></canvas>
-          <div class="canvas-wrap" id="dropZone">
-            <canvas id="stage"></canvas>
-            <div class="drop-hint" id="dropHint">拖入 PNG/JPG 图片到这里</div>
-          </div>
-        </div>
-      </section>
-
-      <aside class="panel">
+      <aside class="panel panel-left">
         <h2>裁切并生成图层</h2>
         <div class="row">
           <label for="targetW">目标宽</label>
@@ -51,6 +34,39 @@
         <button id="exportBtn" type="button">导出 PNG（选中优先） (E)</button>
         <p class="tips">提示：滚轮可上下左右平移画布；中键也可拖动画布。缩放修饰键可在下方设置（默认 Alt/Option(⌥)+滚轮）。画布带像素标尺。框选后可拖动选框，Shift 锁定 1:1。支持一键去除仿 PNG 格子背景，也支持 Ctrl/Cmd+C 复制框选、Ctrl/Cmd+V 粘贴为新图层。按 Backspace 可删除框选内容（无框选时删除选中图层）。在画布中可用 Alt/Option+点击进行多图层点选。</p>
 
+        <h2>快捷键设置</h2>
+        <div class="row">
+          <label for="zoomModifierSelect">缩放键</label>
+          <select id="zoomModifierSelect">
+            <option value="Alt">Alt/Option(⌥)</option>
+            <option value="Ctrl">Ctrl</option>
+            <option value="Meta">Meta/Command(⌘)</option>
+            <option value="Shift">Shift</option>
+            <option value="None">无（直接滚轮缩放）</option>
+          </select>
+        </div>
+        <div id="shortcutList" class="shortcut-list"></div>
+        <button id="resetShortcutBtn" type="button">恢复默认快捷键</button>
+      </aside>
+
+      <section class="workspace">
+        <div class="toolbar">
+          <button id="cropModeBtn" type="button">开始框选 (C)</button>
+          <button id="clearCropBtn" type="button">清除框选 (X/Esc)</button>
+          <span id="statusText">拖入图片开始编辑</span>
+        </div>
+        <div class="canvas-shell">
+          <div class="ruler-corner"></div>
+          <canvas id="rulerTop" class="ruler-top"></canvas>
+          <canvas id="rulerLeft" class="ruler-left"></canvas>
+          <div class="canvas-wrap" id="dropZone">
+            <canvas id="stage"></canvas>
+            <div class="drop-hint" id="dropHint">拖入 PNG/JPG 图片到这里</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel panel-right">
         <h2>AI 生图</h2>
         <div class="row">
           <label for="aiProvider">Provider</label>
@@ -134,20 +150,6 @@
 
         <h2>素材候选区</h2>
         <div id="aiGallery" class="ai-gallery"></div>
-
-        <h2>快捷键设置</h2>
-        <div class="row">
-          <label for="zoomModifierSelect">缩放键</label>
-          <select id="zoomModifierSelect">
-            <option value="Alt">Alt/Option(⌥)</option>
-            <option value="Ctrl">Ctrl</option>
-            <option value="Meta">Meta/Command(⌘)</option>
-            <option value="Shift">Shift</option>
-            <option value="None">无（直接滚轮缩放）</option>
-          </select>
-        </div>
-        <div id="shortcutList" class="shortcut-list"></div>
-        <button id="resetShortcutBtn" type="button">恢复默认快捷键</button>
       </aside>
     </div>
 
