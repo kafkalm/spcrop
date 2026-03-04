@@ -17,6 +17,7 @@ import {
   writeBlobToDirectory,
 } from "./ai/fs-output";
 import { runWithFallback } from "./ai/provider-router";
+import { resolveFallbackProvider } from "./ai/request-config";
 import { createTaskRecord, patchTaskRecord } from "./ai/task-store";
 import { createGeminiAdapter } from "./ai/providers/gemini";
 import { createOpenAIAdapter } from "./ai/providers/openai";
@@ -1613,10 +1614,11 @@ function getSelectedSourceKind(): ImageSourceKind {
 }
 
 function makeProviderRequest(req: GenerateRequest): GenerateRequest {
-  const fallback = aiState.settings.enableFallback
-    ? (aiState.settings.fallbackProvider || (req.provider === "openai" ? "gemini" : "openai"))
-    : undefined;
-  const fallbackProvider = fallback && fallback !== req.provider ? fallback : undefined;
+  const fallbackProvider = resolveFallbackProvider({
+    primaryProvider: req.provider,
+    enableFallback: aiState.settings.enableFallback,
+    fallbackProvider: aiState.settings.fallbackProvider,
+  });
   return {
     ...req,
     fallbackProvider,
