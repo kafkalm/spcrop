@@ -1,0 +1,22 @@
+name: Require Linked Issue
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  linked-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate PR links an issue
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node .github/scripts/pr_issue_link_guard.mjs
