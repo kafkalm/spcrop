@@ -24,7 +24,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 320px minmax(0, 1fr) 360px;
   gap: 12px;
   height: 100%;
   padding: 12px;
@@ -139,6 +139,12 @@ body {
 .panel {
   padding: 12px;
   overflow: auto;
+  min-height: 0;
+}
+
+.panel-left,
+.panel-right {
+  min-width: 0;
 }
 
 h2 {
@@ -394,9 +400,26 @@ button:hover {
   box-shadow: 0 0 0 1px rgba(255, 183, 3, 0.35) inset;
 }
 
+
+@media (max-width: 1380px) {
+  .app {
+    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-rows: 1fr auto;
+  }
+
+  .panel-right {
+    grid-column: 1 / -1;
+    max-height: 40vh;
+  }
+}
+
 @media (max-width: 960px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: 58vh auto;
+    grid-template-rows: auto 56vh auto;
+  }
+
+  .panel-right {
+    max-height: none;
   }
 }
