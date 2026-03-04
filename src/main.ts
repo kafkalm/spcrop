@@ -122,6 +122,7 @@ const ZOOM_MODIFIER_STORAGE_KEY = "spcrop.zoomModifier.v1";
 const AI_SETTINGS_STORAGE_KEY = "spcrop.ai.settings.v1";
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
+  activeProvider: "openai",
   openaiApiKey: "",
   openaiBaseUrl: "https://api.openai.com",
   openaiModel: "gpt-image-1",
@@ -1563,9 +1564,15 @@ function loadAiSettings(): void {
       return;
     }
     const parsed = JSON.parse(raw) as Partial<AiSettings>;
+    const parsedActiveProvider = parsed.activeProvider;
+    let normalizedActiveProvider: ProviderId = DEFAULT_AI_SETTINGS.activeProvider;
+    if (parsedActiveProvider && isProviderId(parsedActiveProvider)) {
+      normalizedActiveProvider = parsedActiveProvider;
+    }
     aiState.settings = {
       ...DEFAULT_AI_SETTINGS,
       ...parsed,
+      activeProvider: normalizedActiveProvider,
       outputCount: clamp(Number(parsed.outputCount ?? DEFAULT_AI_SETTINGS.outputCount), 1, 4),
       fallbackProvider: parsed.fallbackProvider === "openai" || parsed.fallbackProvider === "gemini" || parsed.fallbackProvider === "openrouter"
         ? parsed.fallbackProvider
@@ -1585,6 +1592,7 @@ function saveAiSettings(): void {
 }
 
 function syncAiSettingsToUI(): void {
+  aiProviderSelect.value = aiState.settings.activeProvider;
   openaiApiKeyInput.value = aiState.settings.openaiApiKey;
   openaiBaseUrlInput.value = aiState.settings.openaiBaseUrl;
   openaiModelInput.value = aiState.settings.openaiModel;
@@ -1600,6 +1608,7 @@ function syncAiSettingsToUI(): void {
 }
 
 function syncAiSettingsFromUI(): void {
+  aiState.settings.activeProvider = getActiveProvider();
   aiState.settings.openaiApiKey = openaiApiKeyInput.value.trim();
   aiState.settings.openaiBaseUrl = openaiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openaiBaseUrl;
   aiState.settings.openaiModel = openaiModelInput.value.trim() || DEFAULT_AI_SETTINGS.openaiModel;
@@ -2309,6 +2318,10 @@ aiModeSelect.addEventListener("change", () => {
   const imageMode = mode === "image_to_image";
   aiSourceKindSelect.disabled = !imageMode;
   setStatus(imageMode ? "AI 模式：图生图（需要来源图）" : "AI 模式：文生图");
+});
+
+aiProviderSelect.addEventListener("change", () => {
+  syncAiSettingsFromUI();
 });
 
 aiSourceKindSelect.addEventListener("change", () => {
