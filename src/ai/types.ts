@@ -65,6 +65,7 @@ export interface RunWithFallbackResult {
 }
 
 export interface AiSettings {
+  activeProvider: ProviderId;
   openaiApiKey: string;
   openaiBaseUrl: string;
   openaiModel: string;
