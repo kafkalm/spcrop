@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add free-angle crop selection rotation with corner drag handles and keep crop-based actions working.
+**Goal:** Add free-angle crop selection rotation and Photoshop-like active-layer resize handles, while keeping crop-based actions working.
 
-**Architecture:** Introduce pure geometry helpers (`src/crop-rotation.ts`) and wire them into `src/main.ts` crop interaction/rendering and extraction paths. Use transformed canvas sampling for rotated crop outputs.
+**Architecture:** Introduce pure geometry helpers (`src/crop-rotation.ts`, `src/layer-transform.ts`) and wire them into `src/main.ts` crop interaction/rendering, layer transform interaction, and extraction paths. Use transformed canvas sampling for rotated crop outputs.
 
 **Tech Stack:** TypeScript, Vite, Vitest, HTML Canvas 2D
 
@@ -75,7 +75,30 @@
 - `npm run typecheck`
 - `npm run build`
 
-### Task 4: Documentation update
+### Task 4: Layer resize handles integration
+
+**Files:**
+- Modify: `src/main.ts`
+- Create: `src/layer-transform.ts`
+- Create: `src/__tests__/layer-transform.test.ts`
+
+**Step 1: Add failing tests for layer handle hit test and resize math**
+
+**Step 2: Implement layer transform helpers**
+- 8 handles (corners + edges)
+- shift keep-aspect resize
+- min-size clamp
+
+**Step 3: Integrate into canvas events and rendering**
+- mousedown: resize-handle priority before layer drag
+- mousemove: apply resize deltas
+- render active layer handles
+
+**Step 4: Verify**
+- `npm test -- src/__tests__/layer-transform.test.ts`
+- `npm run typecheck`
+
+### Task 5: Documentation update
 
 **Files:**
 - Modify: `README.md`

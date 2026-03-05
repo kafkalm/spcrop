@@ -23,9 +23,12 @@ Image cropping, arranging, and exporting tool.
 - Multi-select layers, drag to move, arrow key nudging (Shift for faster step)
 - Crop a region and resize to target size (contain) as a new layer
 - One-click fixed-size crop box (default `128x128`)
-- Real-time crop box pixel size label
+- Real-time crop box pixel size and angle label
 - Drag the crop box after creating it
+- Rotate crop by dragging corner handles (free angle)
 - Hold Shift while drawing crop box to lock `1:1`
+- Active layer supports 8 resize handles (corners + edges)
+- Hold Shift while resizing a layer to keep aspect ratio
 - Mouse wheel pans canvas (vertical/horizontal)
 - Middle mouse button pans canvas
 - Modifier + wheel to zoom (configurable)
@@ -74,6 +77,8 @@ Example: 6 layers of `128x128` aligned horizontally export to `768x128`.
 - Zoom: `zoom modifier + wheel`
   - Default modifier: `Alt/Option(⌥)`
   - In UI, you can switch to `Ctrl` / `Meta(Command)` / `Shift` / `None`
+- Crop mode: drag corners to rotate crop freely
+- Layer transform: drag active layer handles to resize (`Shift` = keep aspect)
 
 ## Default Shortcuts (Editable in UI)
 

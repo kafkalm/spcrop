@@ -24,6 +24,22 @@ import { createTaskRecord, patchTaskRecord } from "./ai/task-store";
 import { createGeminiAdapter } from "./ai/providers/gemini";
 import { createOpenAIAdapter } from "./ai/providers/openai";
 import { createOpenRouterAdapter } from "./ai/providers/openrouter";
+import {
+  accumulateRotation,
+  findRotateHandleIndex,
+  getRotatableRectCenter,
+  getRotatedRectCorners,
+  normalizeAngle,
+  pointInRotatedRect,
+  rotatedRectIntersectsAabb,
+  type RotatableRect,
+} from "./crop-rotation";
+import {
+  applyLayerResizeDrag,
+  getLayerResizeHandlePoints,
+  hitTestLayerResizeHandle,
+  type LayerResizeHandle,
+} from "./layer-transform";
 import type {
   AiSettings,
   GalleryItem,
@@ -50,6 +66,8 @@ interface Rect {
   h: number;
 }
 
+interface CropRect extends RotatableRect {}
+
 interface Layer {
   id: number;
   name: string;
@@ -64,6 +82,18 @@ interface DraggingGroupItem {
   id: number;
   startX: number;
   startY: number;
+}
+
+interface LayerResizeState {
+  layerId: number;
+  handle: LayerResizeHandle;
+  startPointer: Point;
+  startRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 }
 
 interface RgbColor {
@@ -85,12 +115,9 @@ interface CheckerPattern {
   accuracy: number;
 }
 
-interface CropSelectionSlice {
+interface CropSelectionResult {
   layer: Layer;
-  sx: number;
-  sy: number;
-  sw: number;
-  sh: number;
+  image: HTMLCanvasElement;
   worldX: number;
   worldY: number;
 }
@@ -120,6 +147,8 @@ type ZoomModifier = "Alt" | "Ctrl" | "Meta" | "Shift" | "None";
 const SHORTCUT_STORAGE_KEY = "spcrop.shortcuts.v1";
 const ZOOM_MODIFIER_STORAGE_KEY = "spcrop.zoomModifier.v1";
 const AI_SETTINGS_STORAGE_KEY = "spcrop.ai.settings.v1";
+const ROTATE_HANDLE_RADIUS_PX = 7;
+const LAYER_HANDLE_RADIUS_PX = 6;
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
   activeProvider: "openai",
@@ -175,11 +204,13 @@ interface AppState {
   activeLayerId: number | null;
   selectedLayerIds: Set<number>;
   cropMode: boolean;
-  cropRect: Rect | null;
+  cropRect: CropRect | null;
   selectingCrop: boolean;
   draggingCrop: boolean;
+  rotatingCrop: boolean;
   cropStart: Point | null;
   cropDragOffset: Point | null;
+  cropRotateLastAngle: number | null;
   panningView: boolean;
   panStartScreen: Point | null;
   panStartOffset: Point | null;
@@ -187,6 +218,7 @@ interface AppState {
   zoomModifier: ZoomModifier;
   shortcutMap: Record<ShortcutAction, string>;
   capturingShortcutFor: ShortcutAction | null;
+  resizingLayer: LayerResizeState | null;
   draggingGroup: DraggingGroupItem[] | null;
   dragStartPointer: Point | null;
   clipboardImage: HTMLCanvasElement | null;
@@ -282,8 +314,10 @@ const state: AppState = {
   cropRect: null,
   selectingCrop: false,
   draggingCrop: false,
+  rotatingCrop: false,
   cropStart: null,
   cropDragOffset: null,
+  cropRotateLastAngle: null,
   panningView: false,
   panStartScreen: null,
   panStartOffset: null,
@@ -295,6 +329,7 @@ const state: AppState = {
   zoomModifier: "Alt",
   shortcutMap: defaultShortcutMap(),
   capturingShortcutFor: null,
+  resizingLayer: null,
   draggingGroup: null,
   dragStartPointer: null,
   clipboardImage: null,
@@ -349,6 +384,13 @@ function normalizeSquareRect(start: Point, current: Point): Rect {
 
 function pointInRect(x: number, y: number, rect: Rect): boolean {
   return x >= rect.x && y >= rect.y && x <= rect.x + rect.w && y <= rect.y + rect.h;
+}
+
+function getActiveCropRect(): CropRect | null {
+  if (!state.cropRect || state.cropRect.w <= 0 || state.cropRect.h <= 0) {
+    return null;
+  }
+  return state.cropRect;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -1053,6 +1095,10 @@ function render(): void {
   ctx.save();
   ctx.setTransform(state.view.scale, 0, 0, state.view.scale, state.view.offsetX, state.view.offsetY);
 
+  const layerHandleHalf = LAYER_HANDLE_RADIUS_PX / state.view.scale;
+  const cropHandleRadius = ROTATE_HANDLE_RADIUS_PX / state.view.scale;
+  const cropRect = getActiveCropRect();
+
   for (const layer of state.layers) {
     ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
 
@@ -1070,33 +1116,61 @@ function render(): void {
       ctx.lineWidth = Math.max(1, 2 / state.view.scale);
       ctx.setLineDash([5 / state.view.scale, 4 / state.view.scale]);
       ctx.strokeRect(layer.x - 2, layer.y - 2, layer.width + 4, layer.height + 4);
+      ctx.setLineDash([]);
+      const handles = getLayerResizeHandlePoints(layer);
+      ctx.fillStyle = "#f8fbff";
+      ctx.strokeStyle = "#0d4f7a";
+      for (const point of Object.values(handles)) {
+        ctx.beginPath();
+        ctx.rect(point.x - layerHandleHalf, point.y - layerHandleHalf, layerHandleHalf * 2, layerHandleHalf * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }
 
-  if (state.cropRect && state.cropRect.w > 0 && state.cropRect.h > 0) {
+  if (cropRect) {
+    const center = getRotatableRectCenter(cropRect);
     ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(cropRect.rotation);
+    ctx.translate(-center.x, -center.y);
     ctx.fillStyle = "rgba(255, 183, 3, 0.18)";
     ctx.strokeStyle = "#ffb703";
     ctx.lineWidth = Math.max(1, 2 / state.view.scale);
     ctx.setLineDash([8 / state.view.scale, 5 / state.view.scale]);
-    ctx.fillRect(state.cropRect.x, state.cropRect.y, state.cropRect.w, state.cropRect.h);
-    ctx.strokeRect(state.cropRect.x, state.cropRect.y, state.cropRect.w, state.cropRect.h);
+    ctx.fillRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+    ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+    ctx.restore();
+
+    const corners = getRotatedRectCorners(cropRect);
+    ctx.save();
+    ctx.fillStyle = "#ffd166";
+    ctx.strokeStyle = "#7a4f00";
+    ctx.lineWidth = Math.max(1, 1.5 / state.view.scale);
+    for (const corner of corners) {
+      ctx.beginPath();
+      ctx.arc(corner.x, corner.y, cropHandleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
   ctx.restore();
 
-  if (state.cropRect && state.cropRect.w > 0 && state.cropRect.h > 0) {
-    const screen = worldToScreen({ x: state.cropRect.x, y: state.cropRect.y });
-    const sw = state.cropRect.w * state.view.scale;
-    const sh = state.cropRect.h * state.view.scale;
-    const label = `${Math.round(state.cropRect.w)} x ${Math.round(state.cropRect.h)} px`;
+  if (cropRect) {
+    const corners = getRotatedRectCorners(cropRect);
+    const anchor = corners.reduce((best, point) => (point.y < best.y || (point.y === best.y && point.x < best.x) ? point : best));
+    const screen = worldToScreen(anchor);
+    const angleDeg = Math.round((normalizeAngle(cropRect.rotation) * 180) / Math.PI);
+    const label = `${Math.round(cropRect.w)} x ${Math.round(cropRect.h)} px • ${angleDeg}°`;
     ctx.save();
     ctx.font = "12px IBM Plex Sans, Segoe UI, sans-serif";
     const textW = ctx.measureText(label).width;
-    const labelX = Math.max(4, Math.min(stage.width - textW - 12, screen.x + 4));
-    const labelY = screen.y > 20 ? screen.y - 8 : screen.y + Math.max(18, sh + 16);
+    const labelX = Math.max(4, Math.min(stage.width - textW - 12, screen.x + 8));
+    const labelY = screen.y > 20 ? screen.y - 8 : screen.y + 24;
     ctx.fillStyle = "rgba(17, 24, 38, 0.88)";
     ctx.fillRect(labelX - 4, labelY - 12, textW + 8, 16);
     ctx.fillStyle = "#ffdf9a";
@@ -1157,38 +1231,52 @@ function selectedLayersByOrder(): Layer[] {
   return state.layers.filter((layer) => state.selectedLayerIds.has(layer.id));
 }
 
-function getActiveCropSlice(): CropSelectionSlice | null {
+function getActiveCropSelectionResult(): CropSelectionResult | null {
   const active = state.activeLayerId !== null ? getLayerById(state.activeLayerId) : null;
-  if (!active || !state.cropRect || state.cropRect.w < 1 || state.cropRect.h < 1) {
+  const cropRect = getActiveCropRect();
+  if (!active || !cropRect) {
     return null;
   }
 
-  const left = Math.max(state.cropRect.x, active.x);
-  const top = Math.max(state.cropRect.y, active.y);
-  const right = Math.min(state.cropRect.x + state.cropRect.w, active.x + active.width);
-  const bottom = Math.min(state.cropRect.y + state.cropRect.h, active.y + active.height);
-  if (right <= left || bottom <= top) {
+  const intersects = rotatedRectIntersectsAabb(cropRect, {
+    x: active.x,
+    y: active.y,
+    w: active.width,
+    h: active.height,
+  });
+  if (!intersects) {
     return null;
   }
 
-  const sx = clamp(Math.floor(left - active.x), 0, active.width);
-  const sy = clamp(Math.floor(top - active.y), 0, active.height);
-  const ex = clamp(Math.ceil(right - active.x), 0, active.width);
-  const ey = clamp(Math.ceil(bottom - active.y), 0, active.height);
-  const sw = ex - sx;
-  const sh = ey - sy;
-  if (sw <= 0 || sh <= 0) {
+  const outW = Math.max(1, Math.round(cropRect.w));
+  const outH = Math.max(1, Math.round(cropRect.h));
+  const canvas = document.createElement("canvas");
+  canvas.width = outW;
+  canvas.height = outH;
+  const cctx = canvas.getContext("2d");
+  if (!cctx) {
     return null;
   }
+
+  cctx.clearRect(0, 0, outW, outH);
+  cctx.save();
+  cctx.translate(outW / 2, outH / 2);
+  cctx.rotate(-cropRect.rotation);
+  cctx.translate(-outW / 2, -outH / 2);
+  cctx.drawImage(
+    active.image,
+    active.x - cropRect.x,
+    active.y - cropRect.y,
+    active.width,
+    active.height,
+  );
+  cctx.restore();
 
   return {
     layer: active,
-    sx,
-    sy,
-    sw,
-    sh,
-    worldX: active.x + sx,
-    worldY: active.y + sy,
+    image: canvas,
+    worldX: cropRect.x,
+    worldY: cropRect.y,
   };
 }
 
@@ -1205,12 +1293,22 @@ function cloneCanvasImage(source: HTMLCanvasElement): HTMLCanvasElement | null {
 }
 
 function eraseActiveLayerCropContent(): boolean {
-  const slice = getActiveCropSlice();
-  if (!slice) {
+  const active = state.activeLayerId !== null ? getLayerById(state.activeLayerId) : null;
+  const cropRect = getActiveCropRect();
+  if (!active || !cropRect) {
+    return false;
+  }
+  const intersects = rotatedRectIntersectsAabb(cropRect, {
+    x: active.x,
+    y: active.y,
+    w: active.width,
+    h: active.height,
+  });
+  if (!intersects) {
     return false;
   }
 
-  const canvas = layerToEditableCanvas(slice.layer);
+  const canvas = layerToEditableCanvas(active);
   if (!canvas) {
     setStatus("删除失败：图层不可编辑");
     return false;
@@ -1221,9 +1319,26 @@ function eraseActiveLayerCropContent(): boolean {
     return false;
   }
 
-  cctx.clearRect(slice.sx, slice.sy, slice.sw, slice.sh);
+  const centerWorld = getRotatableRectCenter(cropRect);
+  const centerLocal = {
+    x: centerWorld.x - active.x,
+    y: centerWorld.y - active.y,
+  };
+  const localRect = {
+    x: cropRect.x - active.x,
+    y: cropRect.y - active.y,
+    w: cropRect.w,
+    h: cropRect.h,
+  };
+
+  cctx.save();
+  cctx.translate(centerLocal.x, centerLocal.y);
+  cctx.rotate(cropRect.rotation);
+  cctx.translate(-centerLocal.x, -centerLocal.y);
+  cctx.clearRect(localRect.x, localRect.y, localRect.w, localRect.h);
+  cctx.restore();
   render();
-  setStatus(`已删除框选内容: ${slice.sw}x${slice.sh}`);
+  setStatus(`已删除框选内容: ${Math.round(cropRect.w)}x${Math.round(cropRect.h)}`);
   return true;
 }
 
@@ -1870,19 +1985,11 @@ function renderAiGallery(): void {
 
 async function resolveImageSource(kind: ImageSourceKind): Promise<ImageInput> {
   if (kind === "crop") {
-    const slice = getActiveCropSlice();
+    const slice = getActiveCropSelectionResult();
     if (!slice) {
       throw new Error("当前没有可用框选区域");
     }
-    const canvas = document.createElement("canvas");
-    canvas.width = slice.sw;
-    canvas.height = slice.sh;
-    const cctx = canvas.getContext("2d");
-    if (!cctx) {
-      throw new Error("2D 上下文不可用");
-    }
-    cctx.drawImage(slice.layer.image, slice.sx, slice.sy, slice.sw, slice.sh, 0, 0, slice.sw, slice.sh);
-    const blob = await canvasToPngBlob(canvas);
+    const blob = await canvasToPngBlob(slice.image);
     return buildImageInput("crop", blob, "crop-source.png");
   }
 
@@ -2145,11 +2252,17 @@ stage.addEventListener("auxclick", (event: MouseEvent) => {
 cropModeBtn.addEventListener("click", () => {
   state.cropMode = !state.cropMode;
   refreshActionButtonLabels();
-  setStatus(state.cropMode ? "框选模式: 在画布拖拽选择区域" : "框选模式已关闭");
+  setStatus(state.cropMode ? "框选模式: 拖拽创建，拖动内部移动，拖四角圆点旋转" : "框选模式已关闭");
 });
 
 clearCropBtn.addEventListener("click", () => {
   state.cropRect = null;
+  state.selectingCrop = false;
+  state.draggingCrop = false;
+  state.rotatingCrop = false;
+  state.cropStart = null;
+  state.cropDragOffset = null;
+  state.cropRotateLastAngle = null;
   render();
   setStatus("框选已清除");
 });
@@ -2175,7 +2288,7 @@ setCropRectBtn.addEventListener("click", () => {
     }
   }
 
-  state.cropRect = { x, y, w: presetW, h: presetH };
+  state.cropRect = { x, y, w: presetW, h: presetH, rotation: 0 };
   state.cropMode = true;
   refreshActionButtonLabels();
   render();
@@ -2192,26 +2305,15 @@ copyCropBtn.addEventListener("click", () => {
     return;
   }
 
-  const slice = getActiveCropSlice();
+  const slice = getActiveCropSelectionResult();
   if (!slice) {
     setStatus("框选区域没有覆盖到活动图层");
     return;
   }
 
-  const canvas = document.createElement("canvas");
-  canvas.width = slice.sw;
-  canvas.height = slice.sh;
-  const cctx = canvas.getContext("2d");
-  if (!cctx) {
-    setStatus("复制失败：2D 上下文不可用");
-    return;
-  }
-
-  cctx.clearRect(0, 0, slice.sw, slice.sh);
-  cctx.drawImage(slice.layer.image, slice.sx, slice.sy, slice.sw, slice.sh, 0, 0, slice.sw, slice.sh);
-  state.clipboardImage = canvas;
+  state.clipboardImage = slice.image;
   state.clipboardPasteCursor = { x: slice.worldX, y: slice.worldY };
-  setStatus(`已复制框选内容: ${slice.sw}x${slice.sh}`);
+  setStatus(`已复制框选内容: ${slice.image.width}x${slice.image.height}`);
 });
 
 pasteCropBtn.addEventListener("click", () => {
@@ -2414,20 +2516,72 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
   const pos = screenToWorld(screenPos);
 
   if (state.cropMode) {
-    if (state.cropRect && state.cropRect.w > 0 && state.cropRect.h > 0 && pointInRect(pos.x, pos.y, state.cropRect)) {
+    const cropRect = getActiveCropRect();
+    if (cropRect) {
+      const rotateHandle = findRotateHandleIndex(
+        pos,
+        cropRect,
+        ROTATE_HANDLE_RADIUS_PX / state.view.scale,
+      );
+      if (rotateHandle !== null) {
+        const center = getRotatableRectCenter(cropRect);
+        state.rotatingCrop = true;
+        state.draggingCrop = false;
+        state.selectingCrop = false;
+        state.cropStart = null;
+        state.cropDragOffset = null;
+        state.cropRotateLastAngle = Math.atan2(pos.y - center.y, pos.x - center.x);
+        return;
+      }
+    }
+
+    if (cropRect && pointInRotatedRect(pos, cropRect)) {
       state.draggingCrop = true;
       state.selectingCrop = false;
+      state.rotatingCrop = false;
       state.cropStart = null;
-      state.cropDragOffset = { x: pos.x - state.cropRect.x, y: pos.y - state.cropRect.y };
+      state.cropDragOffset = { x: pos.x - cropRect.x, y: pos.y - cropRect.y };
+      state.cropRotateLastAngle = null;
       return;
     }
+
     state.draggingCrop = false;
+    state.rotatingCrop = false;
     state.cropDragOffset = null;
+    state.cropRotateLastAngle = null;
     state.selectingCrop = true;
     state.cropStart = pos;
-    state.cropRect = { x: pos.x, y: pos.y, w: 0, h: 0 };
+    state.cropRect = { x: pos.x, y: pos.y, w: 0, h: 0, rotation: 0 };
     render();
     return;
+  }
+
+  const activeLayer = state.activeLayerId !== null ? getLayerById(state.activeLayerId) : null;
+  if (activeLayer) {
+    const resizeHandle = hitTestLayerResizeHandle(pos, activeLayer, LAYER_HANDLE_RADIUS_PX / state.view.scale);
+    if (resizeHandle) {
+      state.activeLayerId = activeLayer.id;
+      if (!state.selectedLayerIds.has(activeLayer.id)) {
+        state.selectedLayerIds.clear();
+        state.selectedLayerIds.add(activeLayer.id);
+      }
+      state.resizingLayer = {
+        layerId: activeLayer.id,
+        handle: resizeHandle,
+        startPointer: pos,
+        startRect: {
+          x: activeLayer.x,
+          y: activeLayer.y,
+          width: activeLayer.width,
+          height: activeLayer.height,
+        },
+      };
+      state.draggingGroup = null;
+      state.dragStartPointer = null;
+      refreshLayerList();
+      render();
+      return;
+    }
   }
 
   const hit = hitTestLayer(pos.x, pos.y);
@@ -2479,22 +2633,63 @@ stage.addEventListener("mousemove", (event: MouseEvent) => {
 
   const pos = screenToWorld(screenPos);
 
-  if (state.draggingCrop && state.cropRect && state.cropDragOffset) {
+  const cropRect = getActiveCropRect();
+
+  if (state.rotatingCrop && cropRect && state.cropRotateLastAngle !== null) {
+    const center = getRotatableRectCenter(cropRect);
+    const currentAngle = Math.atan2(pos.y - center.y, pos.x - center.x);
+    cropRect.rotation = normalizeAngle(
+      accumulateRotation(cropRect.rotation, state.cropRotateLastAngle, currentAngle),
+    );
+    state.cropRotateLastAngle = currentAngle;
+    render();
+    return;
+  }
+
+  if (state.draggingCrop && cropRect && state.cropDragOffset) {
     const visibleMin = screenToWorld({ x: 0, y: 0 });
     const visibleMax = screenToWorld({ x: stage.width, y: stage.height });
-    const maxX = visibleMax.x - state.cropRect.w;
-    const maxY = visibleMax.y - state.cropRect.h;
-    state.cropRect.x = clamp(pos.x - state.cropDragOffset.x, visibleMin.x, Math.max(visibleMin.x, maxX));
-    state.cropRect.y = clamp(pos.y - state.cropDragOffset.y, visibleMin.y, Math.max(visibleMin.y, maxY));
+    const maxX = visibleMax.x - cropRect.w;
+    const maxY = visibleMax.y - cropRect.h;
+    cropRect.x = clamp(pos.x - state.cropDragOffset.x, visibleMin.x, Math.max(visibleMin.x, maxX));
+    cropRect.y = clamp(pos.y - state.cropDragOffset.y, visibleMin.y, Math.max(visibleMin.y, maxY));
     render();
     return;
   }
 
   if (state.selectingCrop && state.cropStart) {
-    state.cropRect = event.shiftKey
+    const nextRect = event.shiftKey
       ? normalizeSquareRect(state.cropStart, pos)
       : normalizeRect(state.cropStart, pos);
+    state.cropRect = {
+      ...nextRect,
+      rotation: 0,
+    };
     render();
+    return;
+  }
+
+  if (state.resizingLayer) {
+    const target = getLayerById(state.resizingLayer.layerId);
+    if (!target) {
+      return;
+    }
+    const dx = pos.x - state.resizingLayer.startPointer.x;
+    const dy = pos.y - state.resizingLayer.startPointer.y;
+    const resized = applyLayerResizeDrag({
+      start: state.resizingLayer.startRect,
+      handle: state.resizingLayer.handle,
+      deltaX: dx,
+      deltaY: dy,
+      keepAspect: event.shiftKey,
+      minSize: 1,
+    });
+    target.x = Math.round(resized.x);
+    target.y = Math.round(resized.y);
+    target.width = Math.max(1, Math.round(resized.width));
+    target.height = Math.max(1, Math.round(resized.height));
+    render();
+    refreshLayerList();
     return;
   }
 
@@ -2517,11 +2712,14 @@ stage.addEventListener("mousemove", (event: MouseEvent) => {
 stage.addEventListener("mouseup", () => {
   state.selectingCrop = false;
   state.draggingCrop = false;
+  state.rotatingCrop = false;
   state.cropStart = null;
   state.cropDragOffset = null;
+  state.cropRotateLastAngle = null;
   state.panningView = false;
   state.panStartScreen = null;
   state.panStartOffset = null;
+  state.resizingLayer = null;
   state.draggingGroup = null;
   state.dragStartPointer = null;
 });
@@ -2529,11 +2727,14 @@ stage.addEventListener("mouseup", () => {
 stage.addEventListener("mouseleave", () => {
   state.selectingCrop = false;
   state.draggingCrop = false;
+  state.rotatingCrop = false;
   state.cropStart = null;
   state.cropDragOffset = null;
+  state.cropRotateLastAngle = null;
   state.panningView = false;
   state.panStartScreen = null;
   state.panStartOffset = null;
+  state.resizingLayer = null;
   state.draggingGroup = null;
   state.dragStartPointer = null;
 });
@@ -2556,20 +2757,13 @@ createLayerBtn.addEventListener("click", () => {
     return;
   }
 
-  const left = Math.max(state.cropRect.x, active.x);
-  const top = Math.max(state.cropRect.y, active.y);
-  const right = Math.min(state.cropRect.x + state.cropRect.w, active.x + active.width);
-  const bottom = Math.min(state.cropRect.y + state.cropRect.h, active.y + active.height);
-
-  const sw = Math.round(right - left);
-  const sh = Math.round(bottom - top);
-  if (sw <= 0 || sh <= 0) {
+  const slice = getActiveCropSelectionResult();
+  if (!slice) {
     setStatus("框选区域没有覆盖到活动图层");
     return;
   }
-
-  const sx = Math.round(left - active.x);
-  const sy = Math.round(top - active.y);
+  const sw = slice.image.width;
+  const sh = slice.image.height;
 
   const canvas = document.createElement("canvas");
   canvas.width = targetW;
@@ -2587,7 +2781,7 @@ createLayerBtn.addEventListener("click", () => {
   const dy = Math.floor((targetH - dh) / 2);
 
   cctx.clearRect(0, 0, targetW, targetH);
-  cctx.drawImage(active.image, sx, sy, sw, sh, dx, dy, dw, dh);
+  cctx.drawImage(slice.image, 0, 0, sw, sh, dx, dy, dw, dh);
 
   const id = state.nextLayerId++;
   const newLayer: Layer = {
