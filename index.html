@@ -76,26 +76,13 @@
             <option value="openrouter">OpenRouter</option>
           </select>
         </div>
-        <div class="row" id="openaiModelRow">
-          <label for="openaiModel">OpenAI 模型</label>
-          <input id="openaiModel" type="text" value="gpt-image-1" />
+        <div class="row">
+          <label for="aiModelPreset">模型</label>
+          <select id="aiModelPreset"></select>
         </div>
-        <div class="row" id="geminiModelPresetRow" hidden>
-          <label for="geminiModelPreset">Gemini 预设</label>
-          <select id="geminiModelPreset">
-            <option value="nanobanana">NanoBanana</option>
-            <option value="nanobanana_pro">NanoBanana Pro</option>
-            <option value="nanobanana_2">NanoBanana 2</option>
-            <option value="custom">自定义（手动输入）</option>
-          </select>
-        </div>
-        <div class="row" id="geminiModelRow" hidden>
-          <label for="geminiModel">Gemini 模型</label>
-          <input id="geminiModel" type="text" value="gemini-2.5-flash-image" />
-        </div>
-        <div class="row" id="openrouterModelRow" hidden>
-          <label for="openrouterModel">OpenRouter 模型</label>
-          <input id="openrouterModel" type="text" value="openai/gpt-5-image" />
+        <div class="row" id="aiModelCustomRow" hidden>
+          <label for="aiModelCustom">自定义模型</label>
+          <input id="aiModelCustom" type="text" placeholder="输入模型 ID" />
         </div>
         <div class="row">
           <label for="aiMode">模式</label>
