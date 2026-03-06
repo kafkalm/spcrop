@@ -32,7 +32,7 @@
         <button id="alignVBtn" type="button">选中图层纵向排列 (V)</button>
         <button id="deleteBtn" type="button">删除选中图层 (Delete/Backspace)</button>
         <button id="exportBtn" type="button">导出 PNG（选中优先） (E)</button>
-        <p class="tips">提示：滚轮可上下左右平移画布；中键也可拖动画布。缩放修饰键可在下方设置（默认 Alt/Option(⌥)+滚轮）。画布带像素标尺。框选后可拖动选框，拖四角圆点可任意角度旋转，Shift 锁定 1:1。活动图层支持 8 个控制点缩放，按住 Shift 等比缩放。支持一键去除仿 PNG 格子背景，也支持 Ctrl/Cmd+C 复制框选、Ctrl/Cmd+V 粘贴为新图层。按 Backspace 可删除框选内容（无框选时删除选中图层）。在画布中可用 Alt/Option+点击进行多图层点选。</p>
+        <p class="tips">提示：滚轮可上下左右平移画布；中键也可拖动画布。缩放修饰键可在下方设置（默认 Alt/Option(⌥)+滚轮）。画布带像素标尺。框选后可拖动选框，拖四角圆点可任意角度旋转，Shift 锁定 1:1。活动图层支持 8 个控制点缩放，顶部圆点可旋转图层，旋转时按住 Shift 可按 15° 吸附。支持一键去除仿 PNG 格子背景，也支持 Ctrl/Cmd+C 复制框选、Ctrl/Cmd+V 粘贴为新图层。图生图来源支持当前框选/活动图层/素材区/上传文件，Gemini 支持 NanoBanana、NanoBanana Pro、NanoBanana 2 预设。按 Backspace 可删除框选内容（无框选时删除选中图层）。支持 Cmd/Ctrl+Z 撤销上一步编辑。在画布中可用 Alt/Option+点击进行多图层点选。</p>
 
         <h2>快捷键设置</h2>
         <div class="row">
@@ -72,7 +72,7 @@
           <label for="aiProvider">Provider</label>
           <select id="aiProvider">
             <option value="openai">OpenAI (GPT)</option>
-            <option value="gemini">NanoBanana (Gemini)</option>
+            <option value="gemini">NanoBanana (Gemini/NanoBanana Pro/NanoBanana 2)</option>
             <option value="openrouter">OpenRouter</option>
           </select>
         </div>
@@ -89,7 +89,15 @@
             <option value="crop">当前框选</option>
             <option value="active_layer">当前活动图层</option>
             <option value="gallery_item">素材区选中图</option>
+            <option value="uploaded_file">上传文件</option>
           </select>
+        </div>
+        <div class="row row-file" id="aiUploadFileRow" hidden>
+          <label for="aiUploadFile">来源文件</label>
+          <div>
+            <input id="aiUploadFile" type="file" accept="image/*" />
+            <div id="aiUploadFileName" class="mini-status">未选择文件</div>
+          </div>
         </div>
         <div class="row row-textarea">
           <label for="aiPrompt">Prompt</label>
@@ -137,6 +145,15 @@
         <div class="row">
           <label for="geminiBaseUrl">Gemini Base</label>
           <input id="geminiBaseUrl" type="text" value="https://generativelanguage.googleapis.com" />
+        </div>
+        <div class="row">
+          <label for="geminiModelPreset">NanoBanana 预设</label>
+          <select id="geminiModelPreset">
+            <option value="nanobanana">NanoBanana</option>
+            <option value="nanobanana_pro">NanoBanana Pro</option>
+            <option value="nanobanana_2">NanoBanana 2</option>
+            <option value="custom">自定义（手动输入）</option>
+          </select>
         </div>
         <div class="row">
           <label for="geminiModel">Gemini 模型</label>

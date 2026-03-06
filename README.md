@@ -29,6 +29,12 @@ Image cropping, arranging, and exporting tool.
 - Hold Shift while drawing crop box to lock `1:1`
 - Active layer supports 8 resize handles (corners + edges)
 - Hold Shift while resizing a layer to keep aspect ratio
+- Active layer supports rotation via top handle drag
+- Hold Shift while rotating a layer to snap angle (15° step)
+- `Cmd/Ctrl+Z` undo for recent editing actions
+- AI text-to-image and image-to-image generation panel
+- Image-to-image supports crop / active layer / gallery item / uploaded file as source
+- Gemini model presets include NanoBanana, NanoBanana Pro, and NanoBanana 2
 - Mouse wheel pans canvas (vertical/horizontal)
 - Middle mouse button pans canvas
 - Modifier + wheel to zoom (configurable)
@@ -79,6 +85,7 @@ Example: 6 layers of `128x128` aligned horizontally export to `768x128`.
   - In UI, you can switch to `Ctrl` / `Meta(Command)` / `Shift` / `None`
 - Crop mode: drag corners to rotate crop freely
 - Layer transform: drag active layer handles to resize (`Shift` = keep aspect)
+- Layer rotation: drag active layer top handle (`Shift` = 15° snap)
 
 ## Default Shortcuts (Editable in UI)
 
@@ -90,6 +97,7 @@ Example: 6 layers of `128x128` aligned horizontally export to `768x128`.
 - `H`: align horizontally
 - `V`: align vertically
 - `Delete` or `Backspace`: delete selected layers
+- `Cmd/Ctrl+Z`: undo last edit
 - `E`: export PNG
 - `Arrow keys`: move selected layers (`Shift + Arrows` = 10px step)
 

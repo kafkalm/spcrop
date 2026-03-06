@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   applyLayerResizeDrag,
+  getLayerRotateHandlePoint,
   hitTestLayerResizeHandle,
+  hitTestLayerRotateHandle,
+  snapAngleToStep,
   type LayerBox,
 } from "../layer-transform";
 
@@ -52,5 +55,22 @@ describe("layer transform", () => {
 
     expect(next.width).toBe(8);
     expect(next.x).toBe(82);
+  });
+
+  it("returns top rotate handle point for active layer", () => {
+    const handle = getLayerRotateHandlePoint({ x: 100, y: 100, width: 120, height: 60, rotation: 0 }, 20);
+    expect(handle.x).toBe(160);
+    expect(handle.y).toBe(80);
+  });
+
+  it("hits rotate handle with radius", () => {
+    const layer = { x: 100, y: 100, width: 80, height: 40, rotation: 0 };
+    expect(hitTestLayerRotateHandle({ x: 140, y: 80 }, layer, 10, 20)).toBe(true);
+    expect(hitTestLayerRotateHandle({ x: 140, y: 50 }, layer, 6, 20)).toBe(false);
+  });
+
+  it("snaps angle to fixed step", () => {
+    const snapped = snapAngleToStep((17 * Math.PI) / 180, (15 * Math.PI) / 180);
+    expect(snapped).toBeCloseTo((15 * Math.PI) / 180, 8);
   });
 });

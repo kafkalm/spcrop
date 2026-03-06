@@ -2,7 +2,7 @@ export type ProviderId = "openai" | "gemini" | "openrouter";
 
 export type GenerationMode = "text_to_image" | "image_to_image";
 
-export type ImageSourceKind = "crop" | "active_layer" | "gallery_item";
+export type ImageSourceKind = "crop" | "active_layer" | "gallery_item" | "uploaded_file";
 
 export interface ImageInput {
   kind: ImageSourceKind;

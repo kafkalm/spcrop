@@ -10,12 +10,34 @@ export interface LayerBox {
   height: number;
 }
 
+export interface RotatableLayerBox extends LayerBox {
+  rotation: number;
+}
+
 export type LayerResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
 
 const HANDLE_ORDER: LayerResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 function clamp(value: number, min: number): number {
   return Math.max(min, value);
+}
+
+function rotatePoint(point: Point, center: Point, angle: number): Point {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
+}
+
+function layerCenter(layer: LayerBox): Point {
+  return {
+    x: layer.x + layer.width / 2,
+    y: layer.y + layer.height / 2,
+  };
 }
 
 export function getLayerResizeHandlePoints(layer: LayerBox): Record<LayerResizeHandle, Point> {
@@ -52,6 +74,37 @@ export function hitTestLayerResizeHandle(point: Point, layer: LayerBox, radius: 
     }
   }
   return null;
+}
+
+export function getLayerRotateHandlePoint(layer: RotatableLayerBox, distance: number): Point {
+  const center = layerCenter(layer);
+  const handle = {
+    x: layer.x + layer.width / 2,
+    y: layer.y - distance,
+  };
+  return rotatePoint(handle, center, layer.rotation);
+}
+
+export function hitTestLayerRotateHandle(
+  point: Point,
+  layer: RotatableLayerBox,
+  radius: number,
+  distance: number,
+): boolean {
+  if (radius <= 0) {
+    return false;
+  }
+  const handle = getLayerRotateHandlePoint(layer, distance);
+  const dx = point.x - handle.x;
+  const dy = point.y - handle.y;
+  return dx * dx + dy * dy <= radius * radius;
+}
+
+export function snapAngleToStep(angle: number, step: number): number {
+  if (step <= 0) {
+    return angle;
+  }
+  return Math.round(angle / step) * step;
 }
 
 interface ResizeInput {

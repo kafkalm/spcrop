@@ -290,6 +290,14 @@ button:hover {
   color: var(--muted);
 }
 
+.row-file {
+  align-items: start;
+}
+
+.row-file .mini-status {
+  margin-bottom: 0;
+}
+
 .mini-status {
   margin-top: 4px;
   margin-bottom: 8px;

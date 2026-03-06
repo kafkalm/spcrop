@@ -8,7 +8,7 @@ import {
   saveOutputDirectoryHandle,
 } from "./ai/history-idb";
 import { dataUrlToBlob } from "./ai/image-utils";
-import { buildImageInput, canvasToPngBlob, imageBitmapToPngBlob } from "./ai/image-source";
+import { buildImageInput, canvasToPngBlob } from "./ai/image-source";
 import {
   downloadBlobFallback,
   ensureDirectoryPermission,
@@ -25,6 +25,12 @@ import { createGeminiAdapter } from "./ai/providers/gemini";
 import { createOpenAIAdapter } from "./ai/providers/openai";
 import { createOpenRouterAdapter } from "./ai/providers/openrouter";
 import {
+  GEMINI_MODEL_PRESET_BY_ID,
+  isImageSourceKind,
+  resolveGeminiModelPreset,
+  type GeminiModelPresetId,
+} from "./ai/ui-options";
+import {
   accumulateRotation,
   findRotateHandleIndex,
   getRotatableRectCenter,
@@ -38,8 +44,11 @@ import {
   applyLayerResizeDrag,
   getLayerResizeHandlePoints,
   hitTestLayerResizeHandle,
+  hitTestLayerRotateHandle,
+  snapAngleToStep,
   type LayerResizeHandle,
 } from "./layer-transform";
+import { createHistory, popHistory, pushHistory } from "./editor-history";
 import type {
   AiSettings,
   GalleryItem,
@@ -76,6 +85,7 @@ interface Layer {
   height: number;
   x: number;
   y: number;
+  rotation: number;
 }
 
 interface DraggingGroupItem {
@@ -94,6 +104,11 @@ interface LayerResizeState {
     width: number;
     height: number;
   };
+}
+
+interface LayerRotateState {
+  layerId: number;
+  lastPointerAngle: number;
 }
 
 interface RgbColor {
@@ -120,6 +135,27 @@ interface CropSelectionResult {
   image: HTMLCanvasElement;
   worldX: number;
   worldY: number;
+}
+
+interface LayerSnapshot {
+  id: number;
+  name: string;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  rotation: number;
+  image: HTMLCanvasElement;
+}
+
+interface EditorSnapshot {
+  layers: LayerSnapshot[];
+  nextLayerId: number;
+  activeLayerId: number | null;
+  selectedLayerIds: number[];
+  cropRect: CropRect | null;
+  clipboardImage: HTMLCanvasElement | null;
+  clipboardPasteCursor: Point | null;
 }
 
 type ShortcutAction =
@@ -149,6 +185,9 @@ const ZOOM_MODIFIER_STORAGE_KEY = "spcrop.zoomModifier.v1";
 const AI_SETTINGS_STORAGE_KEY = "spcrop.ai.settings.v1";
 const ROTATE_HANDLE_RADIUS_PX = 7;
 const LAYER_HANDLE_RADIUS_PX = 6;
+const LAYER_ROTATE_HANDLE_RADIUS_PX = 7;
+const LAYER_ROTATE_HANDLE_OFFSET_PX = 20;
+const LAYER_ROTATE_SNAP_RAD = (15 * Math.PI) / 180;
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
   activeProvider: "openai",
@@ -171,6 +210,7 @@ interface AiRuntimeState {
   tasks: TaskRecord[];
   gallery: GalleryItem[];
   selectedSourceKind: ImageSourceKind;
+  uploadedSourceFile: File | null;
   outputDirHandle: FileSystemDirectoryHandle | null;
   outputDirReady: boolean;
   taskAbortControllers: Map<string, AbortController>;
@@ -219,6 +259,7 @@ interface AppState {
   shortcutMap: Record<ShortcutAction, string>;
   capturingShortcutFor: ShortcutAction | null;
   resizingLayer: LayerResizeState | null;
+  rotatingLayer: LayerRotateState | null;
   draggingGroup: DraggingGroupItem[] | null;
   dragStartPointer: Point | null;
   clipboardImage: HTMLCanvasElement | null;
@@ -274,6 +315,9 @@ const resetShortcutBtn = mustGet<HTMLButtonElement>("resetShortcutBtn");
 const aiProviderSelect = mustGet<HTMLSelectElement>("aiProvider");
 const aiModeSelect = mustGet<HTMLSelectElement>("aiMode");
 const aiSourceKindSelect = mustGet<HTMLSelectElement>("aiSourceKind");
+const aiUploadFileRow = mustGet<HTMLDivElement>("aiUploadFileRow");
+const aiUploadFileInput = mustGet<HTMLInputElement>("aiUploadFile");
+const aiUploadFileName = mustGet<HTMLDivElement>("aiUploadFileName");
 const aiPromptInput = mustGet<HTMLTextAreaElement>("aiPrompt");
 const aiNegativePromptInput = mustGet<HTMLTextAreaElement>("aiNegativePrompt");
 const generateAiBtn = mustGet<HTMLButtonElement>("generateAiBtn");
@@ -289,6 +333,7 @@ const openaiBaseUrlInput = mustGet<HTMLInputElement>("openaiBaseUrl");
 const openaiModelInput = mustGet<HTMLInputElement>("openaiModel");
 const geminiApiKeyInput = mustGet<HTMLInputElement>("geminiApiKey");
 const geminiBaseUrlInput = mustGet<HTMLInputElement>("geminiBaseUrl");
+const geminiModelPresetSelect = mustGet<HTMLSelectElement>("geminiModelPreset");
 const geminiModelInput = mustGet<HTMLInputElement>("geminiModel");
 const openrouterApiKeyInput = mustGet<HTMLInputElement>("openrouterApiKey");
 const openrouterBaseUrlInput = mustGet<HTMLInputElement>("openrouterBaseUrl");
@@ -330,6 +375,7 @@ const state: AppState = {
   shortcutMap: defaultShortcutMap(),
   capturingShortcutFor: null,
   resizingLayer: null,
+  rotatingLayer: null,
   draggingGroup: null,
   dragStartPointer: null,
   clipboardImage: null,
@@ -341,11 +387,14 @@ const aiState: AiRuntimeState = {
   tasks: [],
   gallery: [],
   selectedSourceKind: "crop",
+  uploadedSourceFile: null,
   outputDirHandle: null,
   outputDirReady: false,
   taskAbortControllers: new Map<string, AbortController>(),
   persistingHistory: null,
 };
+
+const undoHistory = createHistory<EditorSnapshot>(60);
 
 function setStatus(text: string): void {
   statusText.textContent = text;
@@ -397,8 +446,73 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function toRotatableLayerRect(layer: Layer): RotatableRect {
+  return {
+    x: layer.x,
+    y: layer.y,
+    w: layer.width,
+    h: layer.height,
+    rotation: layer.rotation,
+  };
+}
+
+function drawLayerWithTransform(
+  targetCtx: CanvasRenderingContext2D,
+  layer: Layer,
+  offsetX = 0,
+  offsetY = 0,
+): void {
+  const center = {
+    x: layer.x + layer.width / 2 + offsetX,
+    y: layer.y + layer.height / 2 + offsetY,
+  };
+  targetCtx.save();
+  targetCtx.translate(center.x, center.y);
+  targetCtx.rotate(layer.rotation);
+  targetCtx.translate(-center.x, -center.y);
+  targetCtx.drawImage(
+    layer.image,
+    layer.x + offsetX,
+    layer.y + offsetY,
+    layer.width,
+    layer.height,
+  );
+  targetCtx.restore();
+}
+
+function layerAxisBounds(layer: Layer): Rect {
+  const corners = getRotatedRectCorners(toRotatableLayerRect(layer));
+  const xs = corners.map((point) => point.x);
+  const ys = corners.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    x: minX,
+    y: minY,
+    w: maxX - minX,
+    h: maxY - minY,
+  };
+}
+
+function renderLayerToCanvas(layer: Layer): HTMLCanvasElement | null {
+  const bounds = layerAxisBounds(layer);
+  const outW = Math.max(1, Math.ceil(bounds.w));
+  const outH = Math.max(1, Math.ceil(bounds.h));
+  const canvas = document.createElement("canvas");
+  canvas.width = outW;
+  canvas.height = outH;
+  const cctx = canvas.getContext("2d");
+  if (!cctx) {
+    return null;
+  }
+  drawLayerWithTransform(cctx, layer, -bounds.x, -bounds.y);
+  return canvas;
+}
+
 function pointInLayer(x: number, y: number, layer: Layer): boolean {
-  return x >= layer.x && y >= layer.y && x <= layer.x + layer.width && y <= layer.y + layer.height;
+  return pointInRotatedRect({ x, y }, toRotatableLayerRect(layer));
 }
 
 function getPointerPos(event: MouseEvent | WheelEvent): Point {
@@ -1001,7 +1115,8 @@ function refreshLayerList(): void {
 
     const body = document.createElement("div");
     body.style.flex = "1";
-    body.innerHTML = `<div>${layer.name}</div><div class="layer-meta">${layer.width}x${layer.height} @ (${Math.round(layer.x)}, ${Math.round(layer.y)})</div>`;
+    const angleDeg = Math.round((normalizeAngle(layer.rotation) * 180) / Math.PI);
+    body.innerHTML = `<div>${layer.name}</div><div class="layer-meta">${layer.width}x${layer.height} @ (${Math.round(layer.x)}, ${Math.round(layer.y)}) · ${angleDeg}°</div>`;
     body.addEventListener("click", () => {
       state.activeLayerId = layer.id;
       if (!state.selectedLayerIds.has(layer.id)) {
@@ -1096,38 +1211,68 @@ function render(): void {
   ctx.setTransform(state.view.scale, 0, 0, state.view.scale, state.view.offsetX, state.view.offsetY);
 
   const layerHandleHalf = LAYER_HANDLE_RADIUS_PX / state.view.scale;
+  const layerRotateHandleRadius = LAYER_ROTATE_HANDLE_RADIUS_PX / state.view.scale;
+  const layerRotateHandleOffset = LAYER_ROTATE_HANDLE_OFFSET_PX / state.view.scale;
   const cropHandleRadius = ROTATE_HANDLE_RADIUS_PX / state.view.scale;
   const cropRect = getActiveCropRect();
 
   for (const layer of state.layers) {
+    const center = {
+      x: layer.x + layer.width / 2,
+      y: layer.y + layer.height / 2,
+    };
+    const isActive = layer.id === state.activeLayerId;
+    const canResize = Math.abs(layer.rotation) < 1e-4;
+
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(layer.rotation);
+    ctx.translate(-center.x, -center.y);
+
     ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
 
     if (state.selectedLayerIds.has(layer.id)) {
-      ctx.save();
       ctx.strokeStyle = "#4bb3fd";
       ctx.lineWidth = Math.max(1, 2 / state.view.scale);
       ctx.strokeRect(layer.x + 1, layer.y + 1, layer.width - 2, layer.height - 2);
-      ctx.restore();
     }
 
-    if (layer.id === state.activeLayerId) {
-      ctx.save();
+    if (isActive) {
       ctx.strokeStyle = "#ffb703";
       ctx.lineWidth = Math.max(1, 2 / state.view.scale);
       ctx.setLineDash([5 / state.view.scale, 4 / state.view.scale]);
       ctx.strokeRect(layer.x - 2, layer.y - 2, layer.width + 4, layer.height + 4);
       ctx.setLineDash([]);
-      const handles = getLayerResizeHandlePoints(layer);
-      ctx.fillStyle = "#f8fbff";
-      ctx.strokeStyle = "#0d4f7a";
-      for (const point of Object.values(handles)) {
-        ctx.beginPath();
-        ctx.rect(point.x - layerHandleHalf, point.y - layerHandleHalf, layerHandleHalf * 2, layerHandleHalf * 2);
-        ctx.fill();
-        ctx.stroke();
+
+      if (canResize) {
+        const handles = getLayerResizeHandlePoints(layer);
+        ctx.fillStyle = "#f8fbff";
+        ctx.strokeStyle = "#0d4f7a";
+        for (const point of Object.values(handles)) {
+          ctx.beginPath();
+          ctx.rect(point.x - layerHandleHalf, point.y - layerHandleHalf, layerHandleHalf * 2, layerHandleHalf * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
       }
-      ctx.restore();
+
+      const topCenterX = layer.x + layer.width / 2;
+      const topCenterY = layer.y;
+      const rotateHandleY = topCenterY - layerRotateHandleOffset;
+      ctx.strokeStyle = "#f59f00";
+      ctx.lineWidth = Math.max(1, 1.5 / state.view.scale);
+      ctx.beginPath();
+      ctx.moveTo(topCenterX, topCenterY);
+      ctx.lineTo(topCenterX, rotateHandleY);
+      ctx.stroke();
+      ctx.fillStyle = "#ffcf5a";
+      ctx.strokeStyle = "#7a4f00";
+      ctx.beginPath();
+      ctx.arc(topCenterX, rotateHandleY, layerRotateHandleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
+    ctx.restore();
   }
 
   if (cropRect) {
@@ -1195,8 +1340,10 @@ async function addLayerFromFile(file: File): Promise<void> {
     height: bitmap.height,
     x: pos.x,
     y: pos.y,
+    rotation: 0,
   };
 
+  recordUndoSnapshot();
   state.layers.push(layer);
   state.activeLayerId = id;
   state.selectedLayerIds.clear();
@@ -1238,12 +1385,8 @@ function getActiveCropSelectionResult(): CropSelectionResult | null {
     return null;
   }
 
-  const intersects = rotatedRectIntersectsAabb(cropRect, {
-    x: active.x,
-    y: active.y,
-    w: active.width,
-    h: active.height,
-  });
+  const bounds = layerAxisBounds(active);
+  const intersects = rotatedRectIntersectsAabb(cropRect, bounds);
   if (!intersects) {
     return null;
   }
@@ -1263,13 +1406,7 @@ function getActiveCropSelectionResult(): CropSelectionResult | null {
   cctx.translate(outW / 2, outH / 2);
   cctx.rotate(-cropRect.rotation);
   cctx.translate(-outW / 2, -outH / 2);
-  cctx.drawImage(
-    active.image,
-    active.x - cropRect.x,
-    active.y - cropRect.y,
-    active.width,
-    active.height,
-  );
+  drawLayerWithTransform(cctx, active, -cropRect.x, -cropRect.y);
   cctx.restore();
 
   return {
@@ -1292,19 +1429,106 @@ function cloneCanvasImage(source: HTMLCanvasElement): HTMLCanvasElement | null {
   return out;
 }
 
+function cloneLayerImageForSnapshot(layer: Layer): HTMLCanvasElement | null {
+  const out = document.createElement("canvas");
+  out.width = layer.width;
+  out.height = layer.height;
+  const octx = out.getContext("2d");
+  if (!octx) {
+    return null;
+  }
+  octx.drawImage(layer.image, 0, 0, layer.width, layer.height);
+  return out;
+}
+
+function captureEditorSnapshot(): EditorSnapshot | null {
+  const layers: LayerSnapshot[] = [];
+  for (const layer of state.layers) {
+    const image = cloneLayerImageForSnapshot(layer);
+    if (!image) {
+      return null;
+    }
+    layers.push({
+      id: layer.id,
+      name: layer.name,
+      width: layer.width,
+      height: layer.height,
+      x: layer.x,
+      y: layer.y,
+      rotation: layer.rotation,
+      image,
+    });
+  }
+
+  const clipboardImage = state.clipboardImage ? cloneCanvasImage(state.clipboardImage) : null;
+  if (state.clipboardImage && !clipboardImage) {
+    return null;
+  }
+
+  return {
+    layers,
+    nextLayerId: state.nextLayerId,
+    activeLayerId: state.activeLayerId,
+    selectedLayerIds: [...state.selectedLayerIds],
+    cropRect: state.cropRect ? { ...state.cropRect } : null,
+    clipboardImage,
+    clipboardPasteCursor: state.clipboardPasteCursor ? { ...state.clipboardPasteCursor } : null,
+  };
+}
+
+function recordUndoSnapshot(): void {
+  const snapshot = captureEditorSnapshot();
+  if (!snapshot) {
+    return;
+  }
+  pushHistory(undoHistory, snapshot);
+}
+
+function restoreEditorSnapshot(snapshot: EditorSnapshot): void {
+  state.layers = snapshot.layers.map((layer) => ({
+    id: layer.id,
+    name: layer.name,
+    image: layer.image,
+    width: layer.width,
+    height: layer.height,
+    x: layer.x,
+    y: layer.y,
+    rotation: layer.rotation,
+  }));
+  state.nextLayerId = snapshot.nextLayerId;
+  state.activeLayerId = snapshot.activeLayerId;
+  state.selectedLayerIds = new Set<number>(snapshot.selectedLayerIds);
+  state.cropRect = snapshot.cropRect ? { ...snapshot.cropRect } : null;
+  state.clipboardImage = snapshot.clipboardImage ? cloneCanvasImage(snapshot.clipboardImage) : null;
+  state.clipboardPasteCursor = snapshot.clipboardPasteCursor ? { ...snapshot.clipboardPasteCursor } : null;
+}
+
+function undoLastChange(): boolean {
+  const snapshot = popHistory(undoHistory);
+  if (!snapshot) {
+    setStatus("没有可撤销的操作");
+    return false;
+  }
+
+  restoreEditorSnapshot(snapshot);
+  refreshLayerList();
+  render();
+  setStatus("已撤销上一步操作");
+  return true;
+}
+
 function eraseActiveLayerCropContent(): boolean {
   const active = state.activeLayerId !== null ? getLayerById(state.activeLayerId) : null;
   const cropRect = getActiveCropRect();
   if (!active || !cropRect) {
     return false;
   }
-  const intersects = rotatedRectIntersectsAabb(cropRect, {
-    x: active.x,
-    y: active.y,
-    w: active.width,
-    h: active.height,
-  });
+  const intersects = rotatedRectIntersectsAabb(cropRect, layerAxisBounds(active));
   if (!intersects) {
+    return false;
+  }
+  if (Math.abs(active.rotation) > 1e-4) {
+    setStatus("旋转图层暂不支持框选删除，请先将图层角度归零");
     return false;
   }
 
@@ -1667,10 +1891,6 @@ function isGenerationMode(value: string): value is GenerationMode {
   return value === "text_to_image" || value === "image_to_image";
 }
 
-function isImageSourceKind(value: string): value is ImageSourceKind {
-  return value === "crop" || value === "active_layer" || value === "gallery_item";
-}
-
 function loadAiSettings(): void {
   try {
     const raw = window.localStorage.getItem(AI_SETTINGS_STORAGE_KEY);
@@ -1714,6 +1934,7 @@ function syncAiSettingsToUI(): void {
   geminiApiKeyInput.value = aiState.settings.geminiApiKey;
   geminiBaseUrlInput.value = aiState.settings.geminiBaseUrl;
   geminiModelInput.value = aiState.settings.geminiModel;
+  geminiModelPresetSelect.value = resolveGeminiModelPreset(aiState.settings.geminiModel);
   openrouterApiKeyInput.value = aiState.settings.openrouterApiKey;
   openrouterBaseUrlInput.value = aiState.settings.openrouterBaseUrl;
   openrouterModelInput.value = aiState.settings.openrouterModel;
@@ -1730,6 +1951,7 @@ function syncAiSettingsFromUI(): void {
   aiState.settings.geminiApiKey = geminiApiKeyInput.value.trim();
   aiState.settings.geminiBaseUrl = geminiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.geminiBaseUrl;
   aiState.settings.geminiModel = geminiModelInput.value.trim() || DEFAULT_AI_SETTINGS.geminiModel;
+  geminiModelPresetSelect.value = resolveGeminiModelPreset(aiState.settings.geminiModel);
   aiState.settings.openrouterApiKey = openrouterApiKeyInput.value.trim();
   aiState.settings.openrouterBaseUrl = openrouterBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openrouterBaseUrl;
   aiState.settings.openrouterModel = openrouterModelInput.value.trim() || DEFAULT_AI_SETTINGS.openrouterModel;
@@ -1753,6 +1975,20 @@ function getActiveMode(): GenerationMode {
 function getSelectedSourceKind(): ImageSourceKind {
   const raw = aiSourceKindSelect.value;
   return isImageSourceKind(raw) ? raw : "crop";
+}
+
+function setUploadedSourceFile(file: File | null): void {
+  aiState.uploadedSourceFile = file;
+  aiUploadFileName.textContent = file ? `已选择：${file.name}` : "未选择文件";
+}
+
+function syncAiSourceControls(): void {
+  const imageMode = getActiveMode() === "image_to_image";
+  aiSourceKindSelect.disabled = !imageMode;
+  const sourceKind = getSelectedSourceKind();
+  const showUpload = imageMode && sourceKind === "uploaded_file";
+  aiUploadFileRow.hidden = !showUpload;
+  aiUploadFileInput.disabled = !showUpload;
 }
 
 function makeProviderRequest(req: GenerateRequest): GenerateRequest {
@@ -1854,6 +2090,11 @@ function renderAiTaskList(): void {
         aiPromptInput.value = task.prompt;
         aiModeSelect.value = task.mode;
         aiProviderSelect.value = task.provider;
+        if (task.imageSourceKind && isImageSourceKind(task.imageSourceKind)) {
+          aiSourceKindSelect.value = task.imageSourceKind;
+          aiState.selectedSourceKind = task.imageSourceKind;
+        }
+        syncAiSourceControls();
         generateAiBtn.click();
       });
       actions.appendChild(retryBtn);
@@ -1927,6 +2168,7 @@ function renderAiGallery(): void {
       aiState.gallery = markSelectedSource(aiState.gallery, item.id);
       aiSourceKindSelect.value = "gallery_item";
       aiState.selectedSourceKind = "gallery_item";
+      syncAiSourceControls();
       renderAiGallery();
       persistAiHistory();
       setStatus("已设置素材来源：候选区选中图");
@@ -1998,10 +2240,23 @@ async function resolveImageSource(kind: ImageSourceKind): Promise<ImageInput> {
     if (!active) {
       throw new Error("请先选中活动图层");
     }
-    const blob = active.image instanceof HTMLCanvasElement
-      ? await canvasToPngBlob(active.image)
-      : await imageBitmapToPngBlob(active.image);
+    const rendered = renderLayerToCanvas(active);
+    if (!rendered) {
+      throw new Error("无法生成活动图层来源图");
+    }
+    const blob = await canvasToPngBlob(rendered);
     return buildImageInput("active_layer", blob, "active-layer.png");
+  }
+
+  if (kind === "uploaded_file") {
+    const file = aiState.uploadedSourceFile;
+    if (!file) {
+      throw new Error("请先上传图生图来源文件");
+    }
+    if (!file.type.startsWith("image/")) {
+      throw new Error("上传来源文件必须是图片格式");
+    }
+    return buildImageInput("uploaded_file", file, file.name || "uploaded-source.png");
   }
 
   const selected = aiState.gallery.find((item) => item.selectedAsSource);
@@ -2146,6 +2401,8 @@ async function restoreAiState(): Promise<void> {
   loadAiSettings();
   syncAiSettingsToUI();
   aiState.selectedSourceKind = getSelectedSourceKind();
+  setUploadedSourceFile(null);
+  syncAiSourceControls();
 
   try {
     const history = await loadAiHistory();
@@ -2256,6 +2513,9 @@ cropModeBtn.addEventListener("click", () => {
 });
 
 clearCropBtn.addEventListener("click", () => {
+  if (state.cropRect) {
+    recordUndoSnapshot();
+  }
   state.cropRect = null;
   state.selectingCrop = false;
   state.draggingCrop = false;
@@ -2288,6 +2548,7 @@ setCropRectBtn.addEventListener("click", () => {
     }
   }
 
+  recordUndoSnapshot();
   state.cropRect = { x, y, w: presetW, h: presetH, rotation: 0 };
   state.cropMode = true;
   refreshActionButtonLabels();
@@ -2353,8 +2614,10 @@ pasteCropBtn.addEventListener("click", () => {
     height: pastedImage.height,
     x: Math.round(pasteX),
     y: Math.round(pasteY),
+    rotation: 0,
   };
 
+  recordUndoSnapshot();
   state.layers.push(newLayer);
   state.activeLayerId = id;
   state.selectedLayerIds.clear();
@@ -2373,6 +2636,7 @@ removeFakeBgBtn.addEventListener("click", () => {
     setStatus("没有可处理的图层");
     return;
   }
+  recordUndoSnapshot();
 
   let processed = 0;
   let removedPixels = 0;
@@ -2418,7 +2682,7 @@ zoomModifierSelect.addEventListener("change", () => {
 aiModeSelect.addEventListener("change", () => {
   const mode = getActiveMode();
   const imageMode = mode === "image_to_image";
-  aiSourceKindSelect.disabled = !imageMode;
+  syncAiSourceControls();
   setStatus(imageMode ? "AI 模式：图生图（需要来源图）" : "AI 模式：文生图");
 });
 
@@ -2428,6 +2692,15 @@ aiProviderSelect.addEventListener("change", () => {
 
 aiSourceKindSelect.addEventListener("change", () => {
   aiState.selectedSourceKind = getSelectedSourceKind();
+  syncAiSourceControls();
+});
+
+aiUploadFileInput.addEventListener("change", () => {
+  const file = aiUploadFileInput.files?.[0] ?? null;
+  setUploadedSourceFile(file);
+  if (file) {
+    setStatus(`图生图来源已上传：${file.name}`);
+  }
 });
 
 openAiSettingsBtn.addEventListener("click", () => {
@@ -2466,6 +2739,18 @@ aiSettingsModal.addEventListener("click", (event) => {
   el.addEventListener("change", () => {
     syncAiSettingsFromUI();
   });
+});
+
+geminiModelPresetSelect.addEventListener("change", () => {
+  const selected = geminiModelPresetSelect.value as GeminiModelPresetId;
+  if (selected !== "custom") {
+    geminiModelInput.value = GEMINI_MODEL_PRESET_BY_ID[selected].model;
+  }
+  syncAiSettingsFromUI();
+});
+
+geminiModelInput.addEventListener("input", () => {
+  geminiModelPresetSelect.value = resolveGeminiModelPreset(geminiModelInput.value);
 });
 
 chooseOutputDirBtn.addEventListener("click", async () => {
@@ -2524,6 +2809,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
         ROTATE_HANDLE_RADIUS_PX / state.view.scale,
       );
       if (rotateHandle !== null) {
+        recordUndoSnapshot();
         const center = getRotatableRectCenter(cropRect);
         state.rotatingCrop = true;
         state.draggingCrop = false;
@@ -2536,6 +2822,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     }
 
     if (cropRect && pointInRotatedRect(pos, cropRect)) {
+      recordUndoSnapshot();
       state.draggingCrop = true;
       state.selectingCrop = false;
       state.rotatingCrop = false;
@@ -2551,6 +2838,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     state.cropRotateLastAngle = null;
     state.selectingCrop = true;
     state.cropStart = pos;
+    recordUndoSnapshot();
     state.cropRect = { x: pos.x, y: pos.y, w: 0, h: 0, rotation: 0 };
     render();
     return;
@@ -2558,29 +2846,59 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
 
   const activeLayer = state.activeLayerId !== null ? getLayerById(state.activeLayerId) : null;
   if (activeLayer) {
-    const resizeHandle = hitTestLayerResizeHandle(pos, activeLayer, LAYER_HANDLE_RADIUS_PX / state.view.scale);
-    if (resizeHandle) {
+    const rotateHit = hitTestLayerRotateHandle(
+      pos,
+      activeLayer,
+      LAYER_ROTATE_HANDLE_RADIUS_PX / state.view.scale,
+      LAYER_ROTATE_HANDLE_OFFSET_PX / state.view.scale,
+    );
+    if (rotateHit) {
+      recordUndoSnapshot();
       state.activeLayerId = activeLayer.id;
       if (!state.selectedLayerIds.has(activeLayer.id)) {
         state.selectedLayerIds.clear();
         state.selectedLayerIds.add(activeLayer.id);
       }
-      state.resizingLayer = {
+      const center = getRotatableRectCenter(toRotatableLayerRect(activeLayer));
+      state.rotatingLayer = {
         layerId: activeLayer.id,
-        handle: resizeHandle,
-        startPointer: pos,
-        startRect: {
-          x: activeLayer.x,
-          y: activeLayer.y,
-          width: activeLayer.width,
-          height: activeLayer.height,
-        },
+        lastPointerAngle: Math.atan2(pos.y - center.y, pos.x - center.x),
       };
+      state.resizingLayer = null;
       state.draggingGroup = null;
       state.dragStartPointer = null;
       refreshLayerList();
       render();
       return;
+    }
+
+    if (Math.abs(activeLayer.rotation) < 1e-4) {
+      const resizeHandle = hitTestLayerResizeHandle(pos, activeLayer, LAYER_HANDLE_RADIUS_PX / state.view.scale);
+      if (resizeHandle) {
+        recordUndoSnapshot();
+        state.activeLayerId = activeLayer.id;
+        if (!state.selectedLayerIds.has(activeLayer.id)) {
+          state.selectedLayerIds.clear();
+          state.selectedLayerIds.add(activeLayer.id);
+        }
+        state.resizingLayer = {
+          layerId: activeLayer.id,
+          handle: resizeHandle,
+          startPointer: pos,
+          startRect: {
+            x: activeLayer.x,
+            y: activeLayer.y,
+            width: activeLayer.width,
+            height: activeLayer.height,
+          },
+        };
+        state.rotatingLayer = null;
+        state.draggingGroup = null;
+        state.dragStartPointer = null;
+        refreshLayerList();
+        render();
+        return;
+      }
     }
   }
 
@@ -2615,6 +2933,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     .map((id) => getLayerById(id))
     .filter((layer): layer is Layer => layer !== null)
     .map((layer) => ({ id: layer.id, startX: layer.x, startY: layer.y }));
+  recordUndoSnapshot();
   state.dragStartPointer = pos;
 
   refreshLayerList();
@@ -2669,6 +2988,26 @@ stage.addEventListener("mousemove", (event: MouseEvent) => {
     return;
   }
 
+  if (state.rotatingLayer) {
+    const target = getLayerById(state.rotatingLayer.layerId);
+    if (!target) {
+      return;
+    }
+    const center = getRotatableRectCenter(toRotatableLayerRect(target));
+    const currentAngle = Math.atan2(pos.y - center.y, pos.x - center.x);
+    let nextRotation = normalizeAngle(
+      accumulateRotation(target.rotation, state.rotatingLayer.lastPointerAngle, currentAngle),
+    );
+    if (event.shiftKey) {
+      nextRotation = snapAngleToStep(nextRotation, LAYER_ROTATE_SNAP_RAD);
+    }
+    target.rotation = normalizeAngle(nextRotation);
+    state.rotatingLayer.lastPointerAngle = currentAngle;
+    render();
+    refreshLayerList();
+    return;
+  }
+
   if (state.resizingLayer) {
     const target = getLayerById(state.resizingLayer.layerId);
     if (!target) {
@@ -2720,6 +3059,7 @@ stage.addEventListener("mouseup", () => {
   state.panStartScreen = null;
   state.panStartOffset = null;
   state.resizingLayer = null;
+  state.rotatingLayer = null;
   state.draggingGroup = null;
   state.dragStartPointer = null;
 });
@@ -2735,6 +3075,7 @@ stage.addEventListener("mouseleave", () => {
   state.panStartScreen = null;
   state.panStartOffset = null;
   state.resizingLayer = null;
+  state.rotatingLayer = null;
   state.draggingGroup = null;
   state.dragStartPointer = null;
 });
@@ -2792,8 +3133,10 @@ createLayerBtn.addEventListener("click", () => {
     height: targetH,
     x: active.x + 24,
     y: active.y + 24,
+    rotation: 0,
   };
 
+  recordUndoSnapshot();
   state.layers.push(newLayer);
   state.activeLayerId = active.id;
   state.selectedLayerIds.clear();
@@ -2811,6 +3154,7 @@ spreadBtn.addEventListener("click", () => {
     setStatus("没有可散开的图层");
     return;
   }
+  recordUndoSnapshot();
 
   const maxW = Math.max(...targets.map((l) => l.width));
   const maxH = Math.max(...targets.map((l) => l.height));
@@ -2835,6 +3179,7 @@ alignHBtn.addEventListener("click", () => {
     setStatus("请先在图层列表勾选要排列的图层");
     return;
   }
+  recordUndoSnapshot();
   let x = 0;
   for (const layer of selected) {
     layer.x = x;
@@ -2852,6 +3197,7 @@ alignVBtn.addEventListener("click", () => {
     setStatus("请先在图层列表勾选要排列的图层");
     return;
   }
+  recordUndoSnapshot();
   let y = 0;
   for (const layer of selected) {
     layer.x = 0;
@@ -2868,6 +3214,7 @@ deleteBtn.addEventListener("click", () => {
     setStatus("没有选中图层");
     return;
   }
+  recordUndoSnapshot();
 
   state.layers = state.layers.filter((layer) => !state.selectedLayerIds.has(layer.id));
   state.selectedLayerIds.clear();
@@ -2893,10 +3240,11 @@ exportBtn.addEventListener("click", () => {
   let maxY = -Infinity;
 
   for (const layer of layersToExport) {
-    minX = Math.min(minX, layer.x);
-    minY = Math.min(minY, layer.y);
-    maxX = Math.max(maxX, layer.x + layer.width);
-    maxY = Math.max(maxY, layer.y + layer.height);
+    const bounds = layerAxisBounds(layer);
+    minX = Math.min(minX, bounds.x);
+    minY = Math.min(minY, bounds.y);
+    maxX = Math.max(maxX, bounds.x + bounds.w);
+    maxY = Math.max(maxY, bounds.y + bounds.h);
   }
 
   const outW = Math.max(1, Math.ceil(maxX - minX));
@@ -2913,7 +3261,7 @@ exportBtn.addEventListener("click", () => {
   }
 
   for (const layer of layersToExport) {
-    octx.drawImage(layer.image, layer.x - minX, layer.y - minY, layer.width, layer.height);
+    drawLayerWithTransform(octx, layer, -minX, -minY);
   }
 
   outCanvas.toBlob((blob) => {
@@ -2948,6 +3296,18 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
 
   const selection = window.getSelection();
   const hasTextSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim().length > 0);
+
+  const wantsUndo = !typing
+    && (event.ctrlKey || event.metaKey)
+    && !event.shiftKey
+    && !event.altKey
+    && event.key.toLowerCase() === "z";
+  if (wantsUndo) {
+    event.preventDefault();
+    undoLastChange();
+    return;
+  }
+
   const clipboardAction = resolveGlobalClipboardAction({
     key: event.key,
     ctrlOrMeta: event.ctrlKey || event.metaKey,
@@ -2972,6 +3332,7 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
     event.preventDefault();
     const hasCrop = Boolean(state.cropRect && state.cropRect.w > 0 && state.cropRect.h > 0);
     if (hasCrop) {
+      recordUndoSnapshot();
       if (eraseActiveLayerCropContent()) {
         return;
       }
@@ -3014,6 +3375,7 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
   }
 
   event.preventDefault();
+  recordUndoSnapshot();
   moveLayers(selectedLayersByOrder(), dx, dy);
   refreshLayerList();
   render();
