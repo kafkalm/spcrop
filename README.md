@@ -31,6 +31,7 @@ Image cropping, arranging, and exporting tool.
 - Hold Shift while resizing a layer to keep aspect ratio
 - Active layer supports rotation via top handle drag
 - Hold Shift while rotating a layer to snap angle (15° step)
+- `Cmd/Ctrl+Z` undo for recent editing actions
 - Mouse wheel pans canvas (vertical/horizontal)
 - Middle mouse button pans canvas
 - Modifier + wheel to zoom (configurable)
@@ -93,6 +94,7 @@ Example: 6 layers of `128x128` aligned horizontally export to `768x128`.
 - `H`: align horizontally
 - `V`: align vertically
 - `Delete` or `Backspace`: delete selected layers
+- `Cmd/Ctrl+Z`: undo last edit
 - `E`: export PNG
 - `Arrow keys`: move selected layers (`Shift + Arrows` = 10px step)
 

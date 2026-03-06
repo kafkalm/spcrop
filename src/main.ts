@@ -42,6 +42,7 @@ import {
   snapAngleToStep,
   type LayerResizeHandle,
 } from "./layer-transform";
+import { createHistory, popHistory, pushHistory } from "./editor-history";
 import type {
   AiSettings,
   GalleryItem,
@@ -128,6 +129,27 @@ interface CropSelectionResult {
   image: HTMLCanvasElement;
   worldX: number;
   worldY: number;
+}
+
+interface LayerSnapshot {
+  id: number;
+  name: string;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  rotation: number;
+  image: HTMLCanvasElement;
+}
+
+interface EditorSnapshot {
+  layers: LayerSnapshot[];
+  nextLayerId: number;
+  activeLayerId: number | null;
+  selectedLayerIds: number[];
+  cropRect: CropRect | null;
+  clipboardImage: HTMLCanvasElement | null;
+  clipboardPasteCursor: Point | null;
 }
 
 type ShortcutAction =
@@ -359,6 +381,8 @@ const aiState: AiRuntimeState = {
   taskAbortControllers: new Map<string, AbortController>(),
   persistingHistory: null,
 };
+
+const undoHistory = createHistory<EditorSnapshot>(60);
 
 function setStatus(text: string): void {
   statusText.textContent = text;
@@ -1307,6 +1331,7 @@ async function addLayerFromFile(file: File): Promise<void> {
     rotation: 0,
   };
 
+  recordUndoSnapshot();
   state.layers.push(layer);
   state.activeLayerId = id;
   state.selectedLayerIds.clear();
@@ -1390,6 +1415,94 @@ function cloneCanvasImage(source: HTMLCanvasElement): HTMLCanvasElement | null {
   }
   octx.drawImage(source, 0, 0);
   return out;
+}
+
+function cloneLayerImageForSnapshot(layer: Layer): HTMLCanvasElement | null {
+  const out = document.createElement("canvas");
+  out.width = layer.width;
+  out.height = layer.height;
+  const octx = out.getContext("2d");
+  if (!octx) {
+    return null;
+  }
+  octx.drawImage(layer.image, 0, 0, layer.width, layer.height);
+  return out;
+}
+
+function captureEditorSnapshot(): EditorSnapshot | null {
+  const layers: LayerSnapshot[] = [];
+  for (const layer of state.layers) {
+    const image = cloneLayerImageForSnapshot(layer);
+    if (!image) {
+      return null;
+    }
+    layers.push({
+      id: layer.id,
+      name: layer.name,
+      width: layer.width,
+      height: layer.height,
+      x: layer.x,
+      y: layer.y,
+      rotation: layer.rotation,
+      image,
+    });
+  }
+
+  const clipboardImage = state.clipboardImage ? cloneCanvasImage(state.clipboardImage) : null;
+  if (state.clipboardImage && !clipboardImage) {
+    return null;
+  }
+
+  return {
+    layers,
+    nextLayerId: state.nextLayerId,
+    activeLayerId: state.activeLayerId,
+    selectedLayerIds: [...state.selectedLayerIds],
+    cropRect: state.cropRect ? { ...state.cropRect } : null,
+    clipboardImage,
+    clipboardPasteCursor: state.clipboardPasteCursor ? { ...state.clipboardPasteCursor } : null,
+  };
+}
+
+function recordUndoSnapshot(): void {
+  const snapshot = captureEditorSnapshot();
+  if (!snapshot) {
+    return;
+  }
+  pushHistory(undoHistory, snapshot);
+}
+
+function restoreEditorSnapshot(snapshot: EditorSnapshot): void {
+  state.layers = snapshot.layers.map((layer) => ({
+    id: layer.id,
+    name: layer.name,
+    image: layer.image,
+    width: layer.width,
+    height: layer.height,
+    x: layer.x,
+    y: layer.y,
+    rotation: layer.rotation,
+  }));
+  state.nextLayerId = snapshot.nextLayerId;
+  state.activeLayerId = snapshot.activeLayerId;
+  state.selectedLayerIds = new Set<number>(snapshot.selectedLayerIds);
+  state.cropRect = snapshot.cropRect ? { ...snapshot.cropRect } : null;
+  state.clipboardImage = snapshot.clipboardImage ? cloneCanvasImage(snapshot.clipboardImage) : null;
+  state.clipboardPasteCursor = snapshot.clipboardPasteCursor ? { ...snapshot.clipboardPasteCursor } : null;
+}
+
+function undoLastChange(): boolean {
+  const snapshot = popHistory(undoHistory);
+  if (!snapshot) {
+    setStatus("没有可撤销的操作");
+    return false;
+  }
+
+  restoreEditorSnapshot(snapshot);
+  refreshLayerList();
+  render();
+  setStatus("已撤销上一步操作");
+  return true;
 }
 
 function eraseActiveLayerCropContent(): boolean {
@@ -2357,6 +2470,9 @@ cropModeBtn.addEventListener("click", () => {
 });
 
 clearCropBtn.addEventListener("click", () => {
+  if (state.cropRect) {
+    recordUndoSnapshot();
+  }
   state.cropRect = null;
   state.selectingCrop = false;
   state.draggingCrop = false;
@@ -2389,6 +2505,7 @@ setCropRectBtn.addEventListener("click", () => {
     }
   }
 
+  recordUndoSnapshot();
   state.cropRect = { x, y, w: presetW, h: presetH, rotation: 0 };
   state.cropMode = true;
   refreshActionButtonLabels();
@@ -2457,6 +2574,7 @@ pasteCropBtn.addEventListener("click", () => {
     rotation: 0,
   };
 
+  recordUndoSnapshot();
   state.layers.push(newLayer);
   state.activeLayerId = id;
   state.selectedLayerIds.clear();
@@ -2475,6 +2593,7 @@ removeFakeBgBtn.addEventListener("click", () => {
     setStatus("没有可处理的图层");
     return;
   }
+  recordUndoSnapshot();
 
   let processed = 0;
   let removedPixels = 0;
@@ -2626,6 +2745,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
         ROTATE_HANDLE_RADIUS_PX / state.view.scale,
       );
       if (rotateHandle !== null) {
+        recordUndoSnapshot();
         const center = getRotatableRectCenter(cropRect);
         state.rotatingCrop = true;
         state.draggingCrop = false;
@@ -2638,6 +2758,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     }
 
     if (cropRect && pointInRotatedRect(pos, cropRect)) {
+      recordUndoSnapshot();
       state.draggingCrop = true;
       state.selectingCrop = false;
       state.rotatingCrop = false;
@@ -2653,6 +2774,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     state.cropRotateLastAngle = null;
     state.selectingCrop = true;
     state.cropStart = pos;
+    recordUndoSnapshot();
     state.cropRect = { x: pos.x, y: pos.y, w: 0, h: 0, rotation: 0 };
     render();
     return;
@@ -2667,6 +2789,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
       LAYER_ROTATE_HANDLE_OFFSET_PX / state.view.scale,
     );
     if (rotateHit) {
+      recordUndoSnapshot();
       state.activeLayerId = activeLayer.id;
       if (!state.selectedLayerIds.has(activeLayer.id)) {
         state.selectedLayerIds.clear();
@@ -2688,6 +2811,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     if (Math.abs(activeLayer.rotation) < 1e-4) {
       const resizeHandle = hitTestLayerResizeHandle(pos, activeLayer, LAYER_HANDLE_RADIUS_PX / state.view.scale);
       if (resizeHandle) {
+        recordUndoSnapshot();
         state.activeLayerId = activeLayer.id;
         if (!state.selectedLayerIds.has(activeLayer.id)) {
           state.selectedLayerIds.clear();
@@ -2745,6 +2869,7 @@ stage.addEventListener("mousedown", (event: MouseEvent) => {
     .map((id) => getLayerById(id))
     .filter((layer): layer is Layer => layer !== null)
     .map((layer) => ({ id: layer.id, startX: layer.x, startY: layer.y }));
+  recordUndoSnapshot();
   state.dragStartPointer = pos;
 
   refreshLayerList();
@@ -2947,6 +3072,7 @@ createLayerBtn.addEventListener("click", () => {
     rotation: 0,
   };
 
+  recordUndoSnapshot();
   state.layers.push(newLayer);
   state.activeLayerId = active.id;
   state.selectedLayerIds.clear();
@@ -2964,6 +3090,7 @@ spreadBtn.addEventListener("click", () => {
     setStatus("没有可散开的图层");
     return;
   }
+  recordUndoSnapshot();
 
   const maxW = Math.max(...targets.map((l) => l.width));
   const maxH = Math.max(...targets.map((l) => l.height));
@@ -2988,6 +3115,7 @@ alignHBtn.addEventListener("click", () => {
     setStatus("请先在图层列表勾选要排列的图层");
     return;
   }
+  recordUndoSnapshot();
   let x = 0;
   for (const layer of selected) {
     layer.x = x;
@@ -3005,6 +3133,7 @@ alignVBtn.addEventListener("click", () => {
     setStatus("请先在图层列表勾选要排列的图层");
     return;
   }
+  recordUndoSnapshot();
   let y = 0;
   for (const layer of selected) {
     layer.x = 0;
@@ -3021,6 +3150,7 @@ deleteBtn.addEventListener("click", () => {
     setStatus("没有选中图层");
     return;
   }
+  recordUndoSnapshot();
 
   state.layers = state.layers.filter((layer) => !state.selectedLayerIds.has(layer.id));
   state.selectedLayerIds.clear();
@@ -3102,6 +3232,18 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
 
   const selection = window.getSelection();
   const hasTextSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim().length > 0);
+
+  const wantsUndo = !typing
+    && (event.ctrlKey || event.metaKey)
+    && !event.shiftKey
+    && !event.altKey
+    && event.key.toLowerCase() === "z";
+  if (wantsUndo) {
+    event.preventDefault();
+    undoLastChange();
+    return;
+  }
+
   const clipboardAction = resolveGlobalClipboardAction({
     key: event.key,
     ctrlOrMeta: event.ctrlKey || event.metaKey,
@@ -3126,6 +3268,7 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
     event.preventDefault();
     const hasCrop = Boolean(state.cropRect && state.cropRect.w > 0 && state.cropRect.h > 0);
     if (hasCrop) {
+      recordUndoSnapshot();
       if (eraseActiveLayerCropContent()) {
         return;
       }
@@ -3168,6 +3311,7 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
   }
 
   event.preventDefault();
+  recordUndoSnapshot();
   moveLayers(selectedLayersByOrder(), dx, dy);
   refreshLayerList();
   render();
