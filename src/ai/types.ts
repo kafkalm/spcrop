@@ -66,6 +66,8 @@ export interface RunWithFallbackResult {
 
 export interface AiSettings {
   activeProvider: ProviderId;
+  preferredMode: GenerationMode;
+  preferredSourceKind: ImageSourceKind;
   openaiApiKey: string;
   openaiBaseUrl: string;
   openaiModel: string;

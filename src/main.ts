@@ -25,10 +25,10 @@ import { createGeminiAdapter } from "./ai/providers/gemini";
 import { createOpenAIAdapter } from "./ai/providers/openai";
 import { createOpenRouterAdapter } from "./ai/providers/openrouter";
 import {
-  GEMINI_MODEL_PRESET_BY_ID,
+  getProviderModelPresets,
   isImageSourceKind,
-  resolveGeminiModelPreset,
-  type GeminiModelPresetId,
+  normalizeGeminiModelId,
+  type ProviderModelPreset,
 } from "./ai/ui-options";
 import {
   accumulateRotation,
@@ -191,12 +191,14 @@ const LAYER_ROTATE_SNAP_RAD = (15 * Math.PI) / 180;
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
   activeProvider: "openai",
+  preferredMode: "text_to_image",
+  preferredSourceKind: "crop",
   openaiApiKey: "",
   openaiBaseUrl: "https://api.openai.com",
-  openaiModel: "gpt-image-1",
+  openaiModel: "gpt-image-1.5",
   geminiApiKey: "",
   geminiBaseUrl: "https://generativelanguage.googleapis.com",
-  geminiModel: "gemini-2.5-flash-image-preview",
+  geminiModel: "gemini-2.5-flash-image",
   openrouterApiKey: "",
   openrouterBaseUrl: "https://openrouter.ai/api/v1",
   openrouterModel: "openai/gpt-5-image",
@@ -204,6 +206,8 @@ const DEFAULT_AI_SETTINGS: AiSettings = {
   fallbackProvider: "",
   outputCount: 1,
 };
+
+const CUSTOM_MODEL_PRESET_ID = "__custom__";
 
 interface AiRuntimeState {
   settings: AiSettings;
@@ -313,6 +317,9 @@ const layerList = mustGet<HTMLUListElement>("layerList");
 const shortcutList = mustGet<HTMLDivElement>("shortcutList");
 const resetShortcutBtn = mustGet<HTMLButtonElement>("resetShortcutBtn");
 const aiProviderSelect = mustGet<HTMLSelectElement>("aiProvider");
+const aiModelPresetSelect = mustGet<HTMLSelectElement>("aiModelPreset");
+const aiModelCustomRow = mustGet<HTMLDivElement>("aiModelCustomRow");
+const aiModelCustomInput = mustGet<HTMLInputElement>("aiModelCustom");
 const aiModeSelect = mustGet<HTMLSelectElement>("aiMode");
 const aiSourceKindSelect = mustGet<HTMLSelectElement>("aiSourceKind");
 const aiUploadFileRow = mustGet<HTMLDivElement>("aiUploadFileRow");
@@ -330,14 +337,10 @@ const aiSettingsModal = mustGet<HTMLDialogElement>("aiSettingsModal");
 const closeAiSettingsBtn = mustGet<HTMLButtonElement>("closeAiSettingsBtn");
 const openaiApiKeyInput = mustGet<HTMLInputElement>("openaiApiKey");
 const openaiBaseUrlInput = mustGet<HTMLInputElement>("openaiBaseUrl");
-const openaiModelInput = mustGet<HTMLInputElement>("openaiModel");
 const geminiApiKeyInput = mustGet<HTMLInputElement>("geminiApiKey");
 const geminiBaseUrlInput = mustGet<HTMLInputElement>("geminiBaseUrl");
-const geminiModelPresetSelect = mustGet<HTMLSelectElement>("geminiModelPreset");
-const geminiModelInput = mustGet<HTMLInputElement>("geminiModel");
 const openrouterApiKeyInput = mustGet<HTMLInputElement>("openrouterApiKey");
 const openrouterBaseUrlInput = mustGet<HTMLInputElement>("openrouterBaseUrl");
-const openrouterModelInput = mustGet<HTMLInputElement>("openrouterModel");
 const aiOutputCountInput = mustGet<HTMLInputElement>("aiOutputCount");
 const enableFallbackInput = mustGet<HTMLInputElement>("enableFallback");
 const fallbackProviderSelect = mustGet<HTMLSelectElement>("fallbackProvider");
@@ -1891,6 +1894,64 @@ function isGenerationMode(value: string): value is GenerationMode {
   return value === "text_to_image" || value === "image_to_image";
 }
 
+function modelPresetsForProvider(provider: ProviderId): ProviderModelPreset[] {
+  return getProviderModelPresets(provider);
+}
+
+function getProviderModel(provider: ProviderId): string {
+  if (provider === "gemini") {
+    return aiState.settings.geminiModel;
+  }
+  if (provider === "openrouter") {
+    return aiState.settings.openrouterModel;
+  }
+  return aiState.settings.openaiModel;
+}
+
+function normalizeModelForProvider(provider: ProviderId, model: string): string {
+  const trimmed = model.trim();
+  if (provider === "gemini") {
+    return normalizeGeminiModelId(trimmed);
+  }
+  return trimmed;
+}
+
+function setProviderModel(provider: ProviderId, model: string): void {
+  if (provider === "gemini") {
+    aiState.settings.geminiModel = normalizeModelForProvider(provider, model) || DEFAULT_AI_SETTINGS.geminiModel;
+    return;
+  }
+  if (provider === "openrouter") {
+    aiState.settings.openrouterModel = normalizeModelForProvider(provider, model) || DEFAULT_AI_SETTINGS.openrouterModel;
+    return;
+  }
+  aiState.settings.openaiModel = normalizeModelForProvider(provider, model) || DEFAULT_AI_SETTINGS.openaiModel;
+}
+
+function syncProviderModelControls(): void {
+  const provider = getActiveProvider();
+  const presets = modelPresetsForProvider(provider);
+  const currentModel = normalizeModelForProvider(provider, getProviderModel(provider));
+  aiModelPresetSelect.innerHTML = "";
+  for (const preset of presets) {
+    const option = document.createElement("option");
+    option.value = preset.id;
+    option.textContent = preset.label;
+    aiModelPresetSelect.appendChild(option);
+  }
+  const customOption = document.createElement("option");
+  customOption.value = CUSTOM_MODEL_PRESET_ID;
+  customOption.textContent = "自定义";
+  aiModelPresetSelect.appendChild(customOption);
+
+  const matched = presets.find((preset) => preset.model === currentModel);
+  aiModelPresetSelect.value = matched ? matched.id : CUSTOM_MODEL_PRESET_ID;
+  aiModelCustomInput.value = currentModel;
+  const showCustom = aiModelPresetSelect.value === CUSTOM_MODEL_PRESET_ID;
+  aiModelCustomRow.hidden = !showCustom;
+  aiModelCustomInput.disabled = !showCustom;
+}
+
 function loadAiSettings(): void {
   try {
     const raw = window.localStorage.getItem(AI_SETTINGS_STORAGE_KEY);
@@ -1904,10 +1965,21 @@ function loadAiSettings(): void {
     if (parsedActiveProvider && isProviderId(parsedActiveProvider)) {
       normalizedActiveProvider = parsedActiveProvider;
     }
+    const parsedPreferredMode = parsed.preferredMode;
+    const normalizedPreferredMode = parsedPreferredMode && isGenerationMode(parsedPreferredMode)
+      ? parsedPreferredMode
+      : DEFAULT_AI_SETTINGS.preferredMode;
+    const parsedPreferredSourceKind = parsed.preferredSourceKind;
+    const normalizedPreferredSourceKind = parsedPreferredSourceKind && isImageSourceKind(parsedPreferredSourceKind)
+      ? parsedPreferredSourceKind
+      : DEFAULT_AI_SETTINGS.preferredSourceKind;
     aiState.settings = {
       ...DEFAULT_AI_SETTINGS,
       ...parsed,
       activeProvider: normalizedActiveProvider,
+      preferredMode: normalizedPreferredMode,
+      preferredSourceKind: normalizedPreferredSourceKind,
+      geminiModel: normalizeGeminiModelId(parsed.geminiModel ?? DEFAULT_AI_SETTINGS.geminiModel),
       outputCount: clamp(Number(parsed.outputCount ?? DEFAULT_AI_SETTINGS.outputCount), 1, 4),
       fallbackProvider: parsed.fallbackProvider === "openai" || parsed.fallbackProvider === "gemini" || parsed.fallbackProvider === "openrouter"
         ? parsed.fallbackProvider
@@ -1928,33 +2000,43 @@ function saveAiSettings(): void {
 
 function syncAiSettingsToUI(): void {
   aiProviderSelect.value = aiState.settings.activeProvider;
+  aiModeSelect.value = aiState.settings.preferredMode;
+  aiSourceKindSelect.value = aiState.settings.preferredSourceKind;
   openaiApiKeyInput.value = aiState.settings.openaiApiKey;
   openaiBaseUrlInput.value = aiState.settings.openaiBaseUrl;
-  openaiModelInput.value = aiState.settings.openaiModel;
   geminiApiKeyInput.value = aiState.settings.geminiApiKey;
   geminiBaseUrlInput.value = aiState.settings.geminiBaseUrl;
-  geminiModelInput.value = aiState.settings.geminiModel;
-  geminiModelPresetSelect.value = resolveGeminiModelPreset(aiState.settings.geminiModel);
   openrouterApiKeyInput.value = aiState.settings.openrouterApiKey;
   openrouterBaseUrlInput.value = aiState.settings.openrouterBaseUrl;
-  openrouterModelInput.value = aiState.settings.openrouterModel;
   aiOutputCountInput.value = String(aiState.settings.outputCount);
   enableFallbackInput.checked = aiState.settings.enableFallback;
   fallbackProviderSelect.value = aiState.settings.fallbackProvider;
+  syncProviderModelControls();
 }
 
 function syncAiSettingsFromUI(): void {
   aiState.settings.activeProvider = getActiveProvider();
+  aiState.settings.preferredMode = getActiveMode();
+  aiState.settings.preferredSourceKind = getSelectedSourceKind();
   aiState.settings.openaiApiKey = openaiApiKeyInput.value.trim();
   aiState.settings.openaiBaseUrl = openaiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openaiBaseUrl;
-  aiState.settings.openaiModel = openaiModelInput.value.trim() || DEFAULT_AI_SETTINGS.openaiModel;
   aiState.settings.geminiApiKey = geminiApiKeyInput.value.trim();
   aiState.settings.geminiBaseUrl = geminiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.geminiBaseUrl;
-  aiState.settings.geminiModel = geminiModelInput.value.trim() || DEFAULT_AI_SETTINGS.geminiModel;
-  geminiModelPresetSelect.value = resolveGeminiModelPreset(aiState.settings.geminiModel);
   aiState.settings.openrouterApiKey = openrouterApiKeyInput.value.trim();
   aiState.settings.openrouterBaseUrl = openrouterBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openrouterBaseUrl;
-  aiState.settings.openrouterModel = openrouterModelInput.value.trim() || DEFAULT_AI_SETTINGS.openrouterModel;
+  const provider = aiState.settings.activeProvider;
+  const presets = modelPresetsForProvider(provider);
+  const selectedPresetId = aiModelPresetSelect.value;
+  if (selectedPresetId === CUSTOM_MODEL_PRESET_ID) {
+    setProviderModel(provider, aiModelCustomInput.value);
+  } else {
+    const preset = presets.find((item) => item.id === selectedPresetId);
+    if (preset) {
+      setProviderModel(provider, preset.model);
+    } else {
+      setProviderModel(provider, getProviderModel(provider));
+    }
+  }
   aiState.settings.outputCount = clamp(Number(aiOutputCountInput.value) || 1, 1, 4);
   aiState.settings.enableFallback = enableFallbackInput.checked;
   const fallbackValue = fallbackProviderSelect.value;
@@ -2090,6 +2172,7 @@ function renderAiTaskList(): void {
         aiPromptInput.value = task.prompt;
         aiModeSelect.value = task.mode;
         aiProviderSelect.value = task.provider;
+        syncProviderModelControls();
         if (task.imageSourceKind && isImageSourceKind(task.imageSourceKind)) {
           aiSourceKindSelect.value = task.imageSourceKind;
           aiState.selectedSourceKind = task.imageSourceKind;
@@ -2168,6 +2251,7 @@ function renderAiGallery(): void {
       aiState.gallery = markSelectedSource(aiState.gallery, item.id);
       aiSourceKindSelect.value = "gallery_item";
       aiState.selectedSourceKind = "gallery_item";
+      syncAiSettingsFromUI();
       syncAiSourceControls();
       renderAiGallery();
       persistAiHistory();
@@ -2682,16 +2766,19 @@ zoomModifierSelect.addEventListener("change", () => {
 aiModeSelect.addEventListener("change", () => {
   const mode = getActiveMode();
   const imageMode = mode === "image_to_image";
+  syncAiSettingsFromUI();
   syncAiSourceControls();
   setStatus(imageMode ? "AI 模式：图生图（需要来源图）" : "AI 模式：文生图");
 });
 
 aiProviderSelect.addEventListener("change", () => {
+  syncProviderModelControls();
   syncAiSettingsFromUI();
 });
 
 aiSourceKindSelect.addEventListener("change", () => {
   aiState.selectedSourceKind = getSelectedSourceKind();
+  syncAiSettingsFromUI();
   syncAiSourceControls();
 });
 
@@ -2725,13 +2812,10 @@ aiSettingsModal.addEventListener("click", (event) => {
 [
   openaiApiKeyInput,
   openaiBaseUrlInput,
-  openaiModelInput,
   geminiApiKeyInput,
   geminiBaseUrlInput,
-  geminiModelInput,
   openrouterApiKeyInput,
   openrouterBaseUrlInput,
-  openrouterModelInput,
   aiOutputCountInput,
   enableFallbackInput,
   fallbackProviderSelect,
@@ -2741,16 +2825,22 @@ aiSettingsModal.addEventListener("click", (event) => {
   });
 });
 
-geminiModelPresetSelect.addEventListener("change", () => {
-  const selected = geminiModelPresetSelect.value as GeminiModelPresetId;
-  if (selected !== "custom") {
-    geminiModelInput.value = GEMINI_MODEL_PRESET_BY_ID[selected].model;
+aiModelPresetSelect.addEventListener("change", () => {
+  const showCustom = aiModelPresetSelect.value === CUSTOM_MODEL_PRESET_ID;
+  aiModelCustomRow.hidden = !showCustom;
+  aiModelCustomInput.disabled = !showCustom;
+  if (!showCustom) {
+    const provider = getActiveProvider();
+    const preset = modelPresetsForProvider(provider).find((item) => item.id === aiModelPresetSelect.value);
+    if (preset) {
+      aiModelCustomInput.value = preset.model;
+    }
   }
   syncAiSettingsFromUI();
 });
 
-geminiModelInput.addEventListener("input", () => {
-  geminiModelPresetSelect.value = resolveGeminiModelPreset(geminiModelInput.value);
+aiModelCustomInput.addEventListener("change", () => {
+  syncAiSettingsFromUI();
 });
 
 chooseOutputDirBtn.addEventListener("click", async () => {
