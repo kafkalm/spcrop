@@ -12,17 +12,17 @@ export const GEMINI_MODEL_PRESETS: GeminiModelPreset[] = [
   {
     id: "nanobanana",
     label: "NanoBanana",
-    model: "gemini-2.5-flash-image-preview",
+    model: "gemini-2.5-flash-image",
   },
   {
     id: "nanobanana_pro",
     label: "NanoBanana Pro",
-    model: "nanobanana-pro",
+    model: "gemini-3.0-image-preview",
   },
   {
     id: "nanobanana_2",
     label: "NanoBanana 2",
-    model: "nanobanana-2",
+    model: "gemini-3.1-flash-image-preview",
   },
 ];
 
@@ -36,8 +36,19 @@ export function isImageSourceKind(value: string): value is ImageSourceKind {
   return value === "crop" || value === "active_layer" || value === "gallery_item" || value === "uploaded_file";
 }
 
-export function resolveGeminiModelPreset(model: string): GeminiModelPresetId {
+const LEGACY_GEMINI_MODEL_ID_ALIASES: Record<string, string> = {
+  "gemini-2.5-flash-image-preview": "gemini-2.5-flash-image",
+  "nanobanana-pro": "gemini-3.0-image-preview",
+  "nanobanana-2": "gemini-3.1-flash-image-preview",
+};
+
+export function normalizeGeminiModelId(model: string): string {
   const normalized = model.trim();
+  return LEGACY_GEMINI_MODEL_ID_ALIASES[normalized] ?? normalized;
+}
+
+export function resolveGeminiModelPreset(model: string): GeminiModelPresetId {
+  const normalized = normalizeGeminiModelId(model);
   for (const preset of GEMINI_MODEL_PRESETS) {
     if (preset.model === normalized) {
       return preset.id;

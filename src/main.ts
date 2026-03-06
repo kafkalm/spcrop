@@ -27,6 +27,7 @@ import { createOpenRouterAdapter } from "./ai/providers/openrouter";
 import {
   GEMINI_MODEL_PRESET_BY_ID,
   isImageSourceKind,
+  normalizeGeminiModelId,
   resolveGeminiModelPreset,
   type GeminiModelPresetId,
 } from "./ai/ui-options";
@@ -196,7 +197,7 @@ const DEFAULT_AI_SETTINGS: AiSettings = {
   openaiModel: "gpt-image-1",
   geminiApiKey: "",
   geminiBaseUrl: "https://generativelanguage.googleapis.com",
-  geminiModel: "gemini-2.5-flash-image-preview",
+  geminiModel: "gemini-2.5-flash-image",
   openrouterApiKey: "",
   openrouterBaseUrl: "https://openrouter.ai/api/v1",
   openrouterModel: "openai/gpt-5-image",
@@ -313,6 +314,10 @@ const layerList = mustGet<HTMLUListElement>("layerList");
 const shortcutList = mustGet<HTMLDivElement>("shortcutList");
 const resetShortcutBtn = mustGet<HTMLButtonElement>("resetShortcutBtn");
 const aiProviderSelect = mustGet<HTMLSelectElement>("aiProvider");
+const openaiModelRow = mustGet<HTMLDivElement>("openaiModelRow");
+const geminiModelPresetRow = mustGet<HTMLDivElement>("geminiModelPresetRow");
+const geminiModelRow = mustGet<HTMLDivElement>("geminiModelRow");
+const openrouterModelRow = mustGet<HTMLDivElement>("openrouterModelRow");
 const aiModeSelect = mustGet<HTMLSelectElement>("aiMode");
 const aiSourceKindSelect = mustGet<HTMLSelectElement>("aiSourceKind");
 const aiUploadFileRow = mustGet<HTMLDivElement>("aiUploadFileRow");
@@ -1908,6 +1913,7 @@ function loadAiSettings(): void {
       ...DEFAULT_AI_SETTINGS,
       ...parsed,
       activeProvider: normalizedActiveProvider,
+      geminiModel: normalizeGeminiModelId(parsed.geminiModel ?? DEFAULT_AI_SETTINGS.geminiModel),
       outputCount: clamp(Number(parsed.outputCount ?? DEFAULT_AI_SETTINGS.outputCount), 1, 4),
       fallbackProvider: parsed.fallbackProvider === "openai" || parsed.fallbackProvider === "gemini" || parsed.fallbackProvider === "openrouter"
         ? parsed.fallbackProvider
@@ -1941,6 +1947,7 @@ function syncAiSettingsToUI(): void {
   aiOutputCountInput.value = String(aiState.settings.outputCount);
   enableFallbackInput.checked = aiState.settings.enableFallback;
   fallbackProviderSelect.value = aiState.settings.fallbackProvider;
+  syncProviderModelControls();
 }
 
 function syncAiSettingsFromUI(): void {
@@ -1950,7 +1957,8 @@ function syncAiSettingsFromUI(): void {
   aiState.settings.openaiModel = openaiModelInput.value.trim() || DEFAULT_AI_SETTINGS.openaiModel;
   aiState.settings.geminiApiKey = geminiApiKeyInput.value.trim();
   aiState.settings.geminiBaseUrl = geminiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.geminiBaseUrl;
-  aiState.settings.geminiModel = geminiModelInput.value.trim() || DEFAULT_AI_SETTINGS.geminiModel;
+  aiState.settings.geminiModel = normalizeGeminiModelId(geminiModelInput.value || DEFAULT_AI_SETTINGS.geminiModel);
+  geminiModelInput.value = aiState.settings.geminiModel;
   geminiModelPresetSelect.value = resolveGeminiModelPreset(aiState.settings.geminiModel);
   aiState.settings.openrouterApiKey = openrouterApiKeyInput.value.trim();
   aiState.settings.openrouterBaseUrl = openrouterBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openrouterBaseUrl;
@@ -1989,6 +1997,14 @@ function syncAiSourceControls(): void {
   const showUpload = imageMode && sourceKind === "uploaded_file";
   aiUploadFileRow.hidden = !showUpload;
   aiUploadFileInput.disabled = !showUpload;
+}
+
+function syncProviderModelControls(): void {
+  const provider = getActiveProvider();
+  openaiModelRow.hidden = provider !== "openai";
+  geminiModelPresetRow.hidden = provider !== "gemini";
+  geminiModelRow.hidden = provider !== "gemini";
+  openrouterModelRow.hidden = provider !== "openrouter";
 }
 
 function makeProviderRequest(req: GenerateRequest): GenerateRequest {
@@ -2090,6 +2106,7 @@ function renderAiTaskList(): void {
         aiPromptInput.value = task.prompt;
         aiModeSelect.value = task.mode;
         aiProviderSelect.value = task.provider;
+        syncProviderModelControls();
         if (task.imageSourceKind && isImageSourceKind(task.imageSourceKind)) {
           aiSourceKindSelect.value = task.imageSourceKind;
           aiState.selectedSourceKind = task.imageSourceKind;
@@ -2688,6 +2705,7 @@ aiModeSelect.addEventListener("change", () => {
 
 aiProviderSelect.addEventListener("change", () => {
   syncAiSettingsFromUI();
+  syncProviderModelControls();
 });
 
 aiSourceKindSelect.addEventListener("change", () => {
