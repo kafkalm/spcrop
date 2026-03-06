@@ -8,6 +8,8 @@ export interface OpenRouterConfig {
   baseUrl: string;
 }
 
+type UnknownRecord = Record<string, unknown>;
+
 type OpenRouterUserContent = string | Array<
   | { type: "text"; text: string }
   | { type: "image_url"; imageUrl: { url: string } }
@@ -33,6 +35,139 @@ function buildPromptText(req: GenerateRequest): string {
     return req.prompt;
   }
   return `${req.prompt}\n\nNegative prompt: ${req.negativePrompt}`;
+}
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return value !== null && typeof value === "object";
+}
+
+function toNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readUrlFromUnknown(value: unknown): string | undefined {
+  const direct = toNonEmptyString(value);
+  if (direct) {
+    return direct;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const url = toNonEmptyString(value.url);
+  if (url) {
+    return url;
+  }
+
+  const nestedCamel = readUrlFromUnknown(value.imageUrl);
+  if (nestedCamel) {
+    return nestedCamel;
+  }
+  return readUrlFromUnknown(value.image_url);
+}
+
+function collectUrlsFromMessageContent(content: unknown, out: Set<string>): void {
+  if (!Array.isArray(content)) {
+    return;
+  }
+  for (const part of content) {
+    if (!isRecord(part)) {
+      continue;
+    }
+    const partType = toNonEmptyString(part.type);
+    if (partType && !partType.includes("image")) {
+      continue;
+    }
+    const url =
+      readUrlFromUnknown(part.imageUrl)
+      ?? readUrlFromUnknown(part.image_url)
+      ?? readUrlFromUnknown(part.url)
+      ?? readUrlFromUnknown(part.result);
+    if (url) {
+      out.add(url);
+    }
+  }
+}
+
+function collectUrlsFromMessageImages(images: unknown, out: Set<string>): void {
+  if (!Array.isArray(images)) {
+    return;
+  }
+  for (const image of images) {
+    const url = readUrlFromUnknown(image);
+    if (url) {
+      out.add(url);
+    }
+  }
+}
+
+function collectUrlsFromToolCalls(toolCalls: unknown, out: Set<string>): void {
+  if (!Array.isArray(toolCalls)) {
+    return;
+  }
+  for (const call of toolCalls) {
+    if (!isRecord(call) || toNonEmptyString(call.type) !== "image_generation_call") {
+      continue;
+    }
+    const url =
+      readUrlFromUnknown(call.result)
+      ?? readUrlFromUnknown(call.imageUrl)
+      ?? readUrlFromUnknown(call.image_url)
+      ?? readUrlFromUnknown(call.url);
+    if (url) {
+      out.add(url);
+    }
+  }
+}
+
+function collectUrlsFromResponsesOutput(output: unknown, out: Set<string>): void {
+  if (!Array.isArray(output)) {
+    return;
+  }
+  for (const item of output) {
+    if (!isRecord(item)) {
+      continue;
+    }
+
+    const itemType = toNonEmptyString(item.type);
+    if (itemType === "image_generation_call") {
+      const url = readUrlFromUnknown(item.result) ?? readUrlFromUnknown(item.imageUrl);
+      if (url) {
+        out.add(url);
+      }
+      continue;
+    }
+    if (itemType === "message") {
+      collectUrlsFromMessageContent(item.content, out);
+    }
+  }
+}
+
+export function collectImageUrlsFromChatResponse(response: unknown): string[] {
+  if (!isRecord(response)) {
+    return [];
+  }
+
+  const imageUrls = new Set<string>();
+  const choices = Array.isArray(response.choices) ? response.choices : [];
+  for (const choice of choices) {
+    if (!isRecord(choice) || !isRecord(choice.message)) {
+      continue;
+    }
+
+    const message = choice.message;
+    collectUrlsFromMessageImages(message.images, imageUrls);
+    collectUrlsFromMessageContent(message.content, imageUrls);
+    collectUrlsFromToolCalls(message.toolCalls, imageUrls);
+    collectUrlsFromToolCalls(message.tool_calls, imageUrls);
+  }
+
+  collectUrlsFromResponsesOutput(response.output, imageUrls);
+  return Array.from(imageUrls);
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -126,14 +261,7 @@ export function createOpenRouterAdapter(getConfig: () => OpenRouterConfig): Prov
             signal,
           });
 
-          const imageUrls: string[] = [];
-          for (const choice of response.choices ?? []) {
-            for (const image of choice.message.images ?? []) {
-              if (image.imageUrl?.url) {
-                imageUrls.push(image.imageUrl.url);
-              }
-            }
-          }
+          const imageUrls = collectImageUrlsFromChatResponse(response);
 
           for (const url of imageUrls) {
             // eslint-disable-next-line no-await-in-loop
