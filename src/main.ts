@@ -1,5 +1,6 @@
 import "./styles.css";
 import { resolveGlobalClipboardAction, resolvePasteAction } from "./clipboard-shortcuts";
+import { extractClipboardImageFiles } from "./clipboard-images";
 import { createGalleryItemsFromAssets, markSelectedSource } from "./ai/gallery-store";
 import {
   loadAiHistory,
@@ -2258,28 +2259,6 @@ function taskErrorToMessage(error: unknown): string {
   return "任务失败";
 }
 
-function readClipboardImageBlob(data: DataTransfer | null): Blob | null {
-  if (!data) {
-    return null;
-  }
-  const files = Array.from(data.files ?? []);
-  const imageFile = files.find((file) => file.type.startsWith("image/"));
-  if (imageFile) {
-    return imageFile;
-  }
-  const items = Array.from(data.items ?? []);
-  for (const item of items) {
-    if (item.kind !== "file" || !item.type.startsWith("image/")) {
-      continue;
-    }
-    const file = item.getAsFile();
-    if (file) {
-      return file;
-    }
-  }
-  return null;
-}
-
 function renderAiTaskList(): void {
   aiTaskList.innerHTML = "";
   const tasks = [...aiState.tasks].sort((a, b) => b.createdAt - a.createdAt);
@@ -3632,10 +3611,10 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
 
 window.addEventListener("paste", (event: ClipboardEvent) => {
   const typing = isTypingTarget(event.target);
-  const imageBlob = readClipboardImageBlob(event.clipboardData);
+  const imageFiles = extractClipboardImageFiles(event.clipboardData);
   const action = resolvePasteAction({
     typing,
-    hasSystemClipboardImage: Boolean(imageBlob),
+    hasSystemClipboardImage: imageFiles.length > 0,
     hasInternalClipboardImage: Boolean(state.clipboardImage),
   });
   if (!action) {
@@ -3649,13 +3628,24 @@ window.addEventListener("paste", (event: ClipboardEvent) => {
     return;
   }
 
-  if (!imageBlob) {
+  if (imageFiles.length === 0) {
     return;
   }
-  void addLayerFromBlob(imageBlob, "clipboard-paste").catch((error) => {
-    const message = taskErrorToMessage(error);
-    setStatus(`粘贴系统剪贴板图片失败：${message}`);
-  });
+  void (async () => {
+    try {
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        // eslint-disable-next-line no-await-in-loop
+        await addLayerFromBlob(file, `clipboard-paste-${i + 1}`);
+      }
+      if (imageFiles.length > 1) {
+        setStatus(`已从系统剪贴板粘贴 ${imageFiles.length} 张图片`);
+      }
+    } catch (error) {
+      const message = taskErrorToMessage(error);
+      setStatus(`粘贴系统剪贴板图片失败：${message}`);
+    }
+  })();
 });
 
 loadShortcutMap();
