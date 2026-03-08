@@ -33,6 +33,16 @@ describe("resolveFallbackProvider", () => {
     expect(fallback).toBe("openrouter");
   });
 
+  it("supports poe as explicit fallback provider", () => {
+    const fallback = resolveFallbackProvider({
+      primaryProvider: "gemini",
+      enableFallback: true,
+      fallbackProvider: "poe",
+    });
+
+    expect(fallback).toBe("poe");
+  });
+
   it("returns undefined when fallback is disabled", () => {
     const fallback = resolveFallbackProvider({
       primaryProvider: "openai",

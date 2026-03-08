@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   GEMINI_MODEL_PRESET_BY_ID,
   OPENAI_MODEL_PRESETS,
+  POE_MODEL_PRESETS,
   OPENROUTER_MODEL_PRESETS,
   getProviderModelPresets,
   isImageSourceKind,
@@ -55,9 +56,16 @@ describe("ai ui options", () => {
     ]);
   });
 
+  it("contains POE image model presets", () => {
+    expect(POE_MODEL_PRESETS.map((item) => item.model)).toEqual([
+      "GPT-Image-1",
+    ]);
+  });
+
   it("returns model presets by provider", () => {
     expect(getProviderModelPresets("openai")[0]?.model).toBe("gpt-image-1.5");
     expect(getProviderModelPresets("gemini")[0]?.model).toBe("gemini-2.5-flash-image");
     expect(getProviderModelPresets("openrouter")[0]?.model).toBe("openrouter/auto");
+    expect(getProviderModelPresets("poe")[0]?.model).toBe("GPT-Image-1");
   });
 });

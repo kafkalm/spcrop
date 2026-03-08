@@ -6,6 +6,8 @@ function getAdapter(provider: ProviderId, adapters: ProviderAdapterMap) {
       return adapters.openai;
     case "gemini":
       return adapters.gemini;
+    case "poe":
+      return adapters.poe;
     default:
       return adapters.openrouter;
   }

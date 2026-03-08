@@ -8,7 +8,9 @@ function makeRequest(provider: ProviderId): GenerateRequest {
     ? "gemini"
     : provider === "gemini"
       ? "openrouter"
-      : "openai";
+      : provider === "openrouter"
+        ? "poe"
+        : "openai";
   return {
     provider,
     mode: "text_to_image",
@@ -50,6 +52,12 @@ describe("runWithFallback", () => {
         return [makeAsset("openrouter")];
       },
     };
+    const poe: ProviderAdapter = {
+      generate: async () => {
+        calls.push("poe");
+        return [makeAsset("poe")];
+      },
+    };
 
     const result = await runWithFallback(
       makeRequest("openrouter"),
@@ -57,6 +65,7 @@ describe("runWithFallback", () => {
         openai,
         gemini,
         openrouter,
+        poe,
       },
       undefined,
     );
@@ -85,8 +94,14 @@ describe("runWithFallback", () => {
         return [makeAsset("openrouter")];
       },
     };
+    const poe: ProviderAdapter = {
+      generate: async () => {
+        calls.push("poe");
+        return [makeAsset("poe")];
+      },
+    };
 
-    const result = await runWithFallback(makeRequest("openai"), { openai, gemini, openrouter });
+    const result = await runWithFallback(makeRequest("openai"), { openai, gemini, openrouter, poe });
 
     expect(result.providerUsed).toBe("openai");
     expect(result.fallbackFrom).toBeNull();
@@ -114,8 +129,14 @@ describe("runWithFallback", () => {
         return [makeAsset("openrouter")];
       },
     };
+    const poe: ProviderAdapter = {
+      generate: async () => {
+        calls.push("poe");
+        return [makeAsset("poe")];
+      },
+    };
 
-    const result = await runWithFallback(makeRequest("openai"), { openai, gemini, openrouter });
+    const result = await runWithFallback(makeRequest("openai"), { openai, gemini, openrouter, poe });
 
     expect(result.providerUsed).toBe("gemini");
     expect(result.fallbackFrom).toBe("openai");
@@ -134,6 +155,9 @@ describe("runWithFallback", () => {
     const openrouter: ProviderAdapter = {
       generate: async () => [makeAsset("openrouter")],
     };
+    const poe: ProviderAdapter = {
+      generate: async () => [makeAsset("poe")],
+    };
 
     await expect(
       runWithFallback(
@@ -141,8 +165,50 @@ describe("runWithFallback", () => {
           ...makeRequest("openai"),
           fallbackProvider: undefined,
         },
-        { openai, gemini, openrouter },
+        { openai, gemini, openrouter, poe },
       ),
     ).rejects.toThrow("primary failed");
+  });
+
+  it("routes poe primary requests to the poe adapter", async () => {
+    const calls: string[] = [];
+    const openai: ProviderAdapter = {
+      generate: async () => {
+        calls.push("openai");
+        return [makeAsset("openai")];
+      },
+    };
+    const gemini: ProviderAdapter = {
+      generate: async () => {
+        calls.push("gemini");
+        return [makeAsset("gemini")];
+      },
+    };
+    const openrouter: ProviderAdapter = {
+      generate: async () => {
+        calls.push("openrouter");
+        return [makeAsset("openrouter")];
+      },
+    };
+    const poe: ProviderAdapter = {
+      generate: async () => {
+        calls.push("poe");
+        return [makeAsset("poe")];
+      },
+    };
+
+    const result = await runWithFallback(
+      makeRequest("poe"),
+      {
+        openai,
+        gemini,
+        openrouter,
+        poe,
+      },
+      undefined,
+    );
+
+    expect(result.providerUsed).toBe("poe");
+    expect(calls).toEqual(["poe"]);
   });
 });

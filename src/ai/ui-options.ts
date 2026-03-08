@@ -89,6 +89,14 @@ export const OPENROUTER_MODEL_PRESETS: ProviderModelPreset[] = [
   },
 ];
 
+export const POE_MODEL_PRESETS: ProviderModelPreset[] = [
+  {
+    id: "poe_gpt_image_1",
+    label: "GPT-Image-1",
+    model: "GPT-Image-1",
+  },
+];
+
 export function isImageSourceKind(value: string): value is ImageSourceKind {
   return value === "crop" || value === "active_layer" || value === "gallery_item" || value === "uploaded_file";
 }
@@ -103,6 +111,9 @@ export function getProviderModelPresets(provider: ProviderId): ProviderModelPres
   }
   if (provider === "openrouter") {
     return OPENROUTER_MODEL_PRESETS;
+  }
+  if (provider === "poe") {
+    return POE_MODEL_PRESETS;
   }
   return OPENAI_MODEL_PRESETS;
 }
