@@ -30,6 +30,7 @@ import { createTaskRecord, patchTaskRecord } from "./ai/task-store";
 import { createGeminiAdapter } from "./ai/providers/gemini";
 import { createOpenAIAdapter } from "./ai/providers/openai";
 import { createOpenRouterAdapter } from "./ai/providers/openrouter";
+import { createPoeAdapter } from "./ai/providers/poe";
 import {
   getProviderModelPresets,
   isImageSourceKind,
@@ -210,6 +211,9 @@ const DEFAULT_AI_SETTINGS: AiSettings = {
   openrouterApiKey: "",
   openrouterBaseUrl: "https://openrouter.ai/api/v1",
   openrouterModel: "openai/gpt-5-image",
+  poeApiKey: "",
+  poeBaseUrl: "https://api.poe.com/v1",
+  poeModel: "GPT-Image-1",
   enableFallback: true,
   fallbackProvider: "",
   outputCount: 1,
@@ -353,6 +357,8 @@ const geminiApiKeyInput = mustGet<HTMLInputElement>("geminiApiKey");
 const geminiBaseUrlInput = mustGet<HTMLInputElement>("geminiBaseUrl");
 const openrouterApiKeyInput = mustGet<HTMLInputElement>("openrouterApiKey");
 const openrouterBaseUrlInput = mustGet<HTMLInputElement>("openrouterBaseUrl");
+const poeApiKeyInput = mustGet<HTMLInputElement>("poeApiKey");
+const poeBaseUrlInput = mustGet<HTMLInputElement>("poeBaseUrl");
 const aiOutputCountInput = mustGet<HTMLInputElement>("aiOutputCount");
 const enableFallbackInput = mustGet<HTMLInputElement>("enableFallback");
 const fallbackProviderSelect = mustGet<HTMLSelectElement>("fallbackProvider");
@@ -1932,7 +1938,7 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 function isProviderId(value: string): value is ProviderId {
-  return value === "openai" || value === "gemini" || value === "openrouter";
+  return value === "openai" || value === "gemini" || value === "openrouter" || value === "poe";
 }
 
 function isGenerationMode(value: string): value is GenerationMode {
@@ -1949,6 +1955,9 @@ function getProviderModel(provider: ProviderId): string {
   }
   if (provider === "openrouter") {
     return aiState.settings.openrouterModel;
+  }
+  if (provider === "poe") {
+    return aiState.settings.poeModel;
   }
   return aiState.settings.openaiModel;
 }
@@ -1968,6 +1977,10 @@ function setProviderModel(provider: ProviderId, model: string): void {
   }
   if (provider === "openrouter") {
     aiState.settings.openrouterModel = normalizeModelForProvider(provider, model) || DEFAULT_AI_SETTINGS.openrouterModel;
+    return;
+  }
+  if (provider === "poe") {
+    aiState.settings.poeModel = normalizeModelForProvider(provider, model) || DEFAULT_AI_SETTINGS.poeModel;
     return;
   }
   aiState.settings.openaiModel = normalizeModelForProvider(provider, model) || DEFAULT_AI_SETTINGS.openaiModel;
@@ -2026,7 +2039,10 @@ function loadAiSettings(): void {
       preferredSourceKind: normalizedPreferredSourceKind,
       geminiModel: normalizeGeminiModelId(parsed.geminiModel ?? DEFAULT_AI_SETTINGS.geminiModel),
       outputCount: clamp(Number(parsed.outputCount ?? DEFAULT_AI_SETTINGS.outputCount), 1, 4),
-      fallbackProvider: parsed.fallbackProvider === "openai" || parsed.fallbackProvider === "gemini" || parsed.fallbackProvider === "openrouter"
+      fallbackProvider: parsed.fallbackProvider === "openai"
+        || parsed.fallbackProvider === "gemini"
+        || parsed.fallbackProvider === "openrouter"
+        || parsed.fallbackProvider === "poe"
         ? parsed.fallbackProvider
         : "",
     };
@@ -2053,6 +2069,8 @@ function syncAiSettingsToUI(): void {
   geminiBaseUrlInput.value = aiState.settings.geminiBaseUrl;
   openrouterApiKeyInput.value = aiState.settings.openrouterApiKey;
   openrouterBaseUrlInput.value = aiState.settings.openrouterBaseUrl;
+  poeApiKeyInput.value = aiState.settings.poeApiKey;
+  poeBaseUrlInput.value = aiState.settings.poeBaseUrl;
   aiOutputCountInput.value = String(aiState.settings.outputCount);
   enableFallbackInput.checked = aiState.settings.enableFallback;
   fallbackProviderSelect.value = aiState.settings.fallbackProvider;
@@ -2069,6 +2087,8 @@ function syncAiSettingsFromUI(): void {
   aiState.settings.geminiBaseUrl = geminiBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.geminiBaseUrl;
   aiState.settings.openrouterApiKey = openrouterApiKeyInput.value.trim();
   aiState.settings.openrouterBaseUrl = openrouterBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.openrouterBaseUrl;
+  aiState.settings.poeApiKey = poeApiKeyInput.value.trim();
+  aiState.settings.poeBaseUrl = poeBaseUrlInput.value.trim() || DEFAULT_AI_SETTINGS.poeBaseUrl;
   const provider = aiState.settings.activeProvider;
   const presets = modelPresetsForProvider(provider);
   const selectedPresetId = aiModelPresetSelect.value;
@@ -2270,6 +2290,11 @@ const geminiAdapter = createGeminiAdapter(() => ({
 const openrouterAdapter = createOpenRouterAdapter(() => ({
   apiKey: aiState.settings.openrouterApiKey,
   baseUrl: aiState.settings.openrouterBaseUrl,
+}));
+
+const poeAdapter = createPoeAdapter(() => ({
+  apiKey: aiState.settings.poeApiKey,
+  baseUrl: aiState.settings.poeBaseUrl,
 }));
 
 function refreshOutputDirStatus(): void {
@@ -2574,7 +2599,9 @@ async function createGenerateRequestFromUI(): Promise<GenerateRequest> {
     ? aiState.settings.openaiModel
     : provider === "gemini"
       ? aiState.settings.geminiModel
-      : aiState.settings.openrouterModel;
+      : provider === "openrouter"
+        ? aiState.settings.openrouterModel
+        : aiState.settings.poeModel;
   const request = makeProviderRequest({
     provider,
     mode,
@@ -2607,7 +2634,7 @@ async function runGenerateTask(request: GenerateRequest): Promise<void> {
   try {
     const result = await runWithFallback(
       request,
-      { openai: openaiAdapter, gemini: geminiAdapter, openrouter: openrouterAdapter },
+      { openai: openaiAdapter, gemini: geminiAdapter, openrouter: openrouterAdapter, poe: poeAdapter },
       controller.signal,
     );
     const outputFiles: string[] = [];
@@ -3102,6 +3129,8 @@ aiSettingsModal.addEventListener("click", (event) => {
   geminiBaseUrlInput,
   openrouterApiKeyInput,
   openrouterBaseUrlInput,
+  poeApiKeyInput,
+  poeBaseUrlInput,
   aiOutputCountInput,
   enableFallbackInput,
   fallbackProviderSelect,

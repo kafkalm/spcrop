@@ -74,6 +74,7 @@
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="poe">POE</option>
           </select>
         </div>
         <div class="row">
@@ -166,6 +167,14 @@
           <input id="openrouterBaseUrl" type="text" value="https://openrouter.ai/api/v1" />
         </div>
         <div class="row">
+          <label for="poeApiKey">POE Key</label>
+          <input id="poeApiKey" type="password" autocomplete="off" placeholder="ppk_..." />
+        </div>
+        <div class="row">
+          <label for="poeBaseUrl">POE Base</label>
+          <input id="poeBaseUrl" type="text" value="https://api.poe.com/v1" />
+        </div>
+        <div class="row">
           <label for="aiOutputCount">张数</label>
           <input id="aiOutputCount" type="number" min="1" max="4" value="1" />
         </div>
@@ -180,6 +189,7 @@
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="poe">POE</option>
           </select>
         </div>
       </form>
