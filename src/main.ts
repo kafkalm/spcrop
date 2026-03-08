@@ -1,5 +1,5 @@
 import "./styles.css";
-import { resolveGlobalClipboardAction } from "./clipboard-shortcuts";
+import { resolveGlobalClipboardAction, resolvePasteAction } from "./clipboard-shortcuts";
 import { createGalleryItemsFromAssets, markSelectedSource } from "./ai/gallery-store";
 import {
   loadAiHistory,
@@ -2258,6 +2258,28 @@ function taskErrorToMessage(error: unknown): string {
   return "任务失败";
 }
 
+function readClipboardImageBlob(data: DataTransfer | null): Blob | null {
+  if (!data) {
+    return null;
+  }
+  const files = Array.from(data.files ?? []);
+  const imageFile = files.find((file) => file.type.startsWith("image/"));
+  if (imageFile) {
+    return imageFile;
+  }
+  const items = Array.from(data.items ?? []);
+  for (const item of items) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) {
+      return file;
+    }
+  }
+  return null;
+}
+
 function renderAiTaskList(): void {
   aiTaskList.innerHTML = "";
   const tasks = [...aiState.tasks].sort((a, b) => b.createdAt - a.createdAt);
@@ -3551,8 +3573,6 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
   }
 
   if (clipboardAction === "pasteCropSelection") {
-    event.preventDefault();
-    pasteCropBtn.click();
     return;
   }
 
@@ -3608,6 +3628,34 @@ window.addEventListener("keydown", (event: KeyboardEvent) => {
   refreshLayerList();
   render();
   setStatus(`已移动 ${state.selectedLayerIds.size} 个图层 (${dx}, ${dy})`);
+});
+
+window.addEventListener("paste", (event: ClipboardEvent) => {
+  const typing = isTypingTarget(event.target);
+  const imageBlob = readClipboardImageBlob(event.clipboardData);
+  const action = resolvePasteAction({
+    typing,
+    hasSystemClipboardImage: Boolean(imageBlob),
+    hasInternalClipboardImage: Boolean(state.clipboardImage),
+  });
+  if (!action) {
+    return;
+  }
+
+  event.preventDefault();
+
+  if (action === "internal_crop") {
+    pasteCropBtn.click();
+    return;
+  }
+
+  if (!imageBlob) {
+    return;
+  }
+  void addLayerFromBlob(imageBlob, "clipboard-paste").catch((error) => {
+    const message = taskErrorToMessage(error);
+    setStatus(`粘贴系统剪贴板图片失败：${message}`);
+  });
 });
 
 loadShortcutMap();

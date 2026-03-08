@@ -1,4 +1,5 @@
 export type GlobalClipboardAction = "copyCropSelection" | "pasteCropSelection";
+export type PasteAction = "system_image" | "internal_crop";
 
 export interface ResolveGlobalClipboardActionInput {
   key: string;
@@ -27,5 +28,24 @@ export function resolveGlobalClipboardAction(
     return "pasteCropSelection";
   }
 
+  return null;
+}
+
+export interface ResolvePasteActionInput {
+  typing: boolean;
+  hasSystemClipboardImage: boolean;
+  hasInternalClipboardImage: boolean;
+}
+
+export function resolvePasteAction(input: ResolvePasteActionInput): PasteAction | null {
+  if (input.typing) {
+    return null;
+  }
+  if (input.hasInternalClipboardImage) {
+    return "internal_crop";
+  }
+  if (input.hasSystemClipboardImage) {
+    return "system_image";
+  }
   return null;
 }
